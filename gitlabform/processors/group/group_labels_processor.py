@@ -23,6 +23,11 @@ class GroupLabelsProcessor(AbstractProcessor):
     def _get_desired_state(self, entity_config: Dict) -> Dict[str, Dict]:
         return self._labels_processor.get_desired_labels_for_diff(entity_config)
 
+    def _reconcile_with_apply(self, group_path_and_name: str, current: Dict, desired: Dict, entity_config) -> Dict:
+        return self._labels_processor.mark_labels_an_ancestor_provides(
+            current, desired, self.gl.get_group_by_path_cached(group_path_and_name)
+        )
+
     def _process_configuration(self, group_path_and_name: str, configuration: Dict):
         configured_labels = configuration.get("group_labels", {})
 

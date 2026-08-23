@@ -22,6 +22,18 @@ class ResourceGroupsProcessor(AbstractProcessor):
     def _get_desired_state(self, entity_config: dict) -> dict:
         return {name: config for name, config in entity_config.items() if name != "ensure_exists"}
 
+    APPLY_WILL_FAIL = "(not in GitLab - apply will fail; see ensure_exists)"
+    WILL_BE_SKIPPED = "(not in GitLab - will be skipped)"
+
+    def _reconcile_with_apply(
+        self, project_or_project_and_group: str, current: dict, desired: dict, entity_config
+    ) -> dict:
+        """Say what _process_configuration() does with a resource group GitLab has not
+        got: this section never creates one, so its config is not a state to apply."""
+        ensure_exists = entity_config.get("ensure_exists", True) if isinstance(entity_config, dict) else True
+        marker = self.APPLY_WILL_FAIL if ensure_exists else self.WILL_BE_SKIPPED
+        return {key: (wanted if key in current else marker) for key, wanted in desired.items()}
+
     @staticmethod
     def _comparable_resource_group(resource_group: dict) -> dict:
         return {k: v for k, v in resource_group.items() if k not in {"id", "key", "created_at", "updated_at"}}

@@ -27,6 +27,7 @@ class FilesProcessor(AbstractProcessor):
         self.branch_processor = BranchesProcessor(gitlab, strict)
         self._configuration_for_diff: dict | None = None
         self._project_and_group_for_diff: str | None = None
+        self._diff_keys_left_alone_without_overwrite: set[str] = set()
 
     def _section_is_in_config(self, configuration: dict):
         """Keep the whole configuration for the diff hooks, which are handed this
@@ -63,6 +64,7 @@ class FilesProcessor(AbstractProcessor):
 
         desired: dict = {}
         desired_content_per_file: dict = {}
+        self._diff_keys_left_alone_without_overwrite = set()
         for file, branch_name in self._files_and_branches(project, configuration):
             if configuration.get("files|" + file + "|delete"):
                 desired[f"{file} @ {branch_name}"] = {"exists": False}
@@ -71,10 +73,26 @@ class FilesProcessor(AbstractProcessor):
                     desired_content_per_file[file] = self.get_desired_file_content(
                         file, configuration, project_and_group
                     )
+                if not configuration.get("files|" + file + "|overwrite"):
+                    self._diff_keys_left_alone_without_overwrite.add(f"{file} @ {branch_name}")
                 desired[f"{file} @ {branch_name}"] = {
                     "exists": True,
                     "content": desired_content_per_file[file],
                 }
+        return desired
+
+    def _reconcile_with_apply(
+        self, project_or_project_and_group: str, current: dict, desired: dict, entity_config
+    ) -> dict:
+        """Make the diff obey "overwrite" the same way process_branch() does.
+
+        Without it a file that is already there is left exactly as it is, so it is shown
+        holding what it holds now. A file that is absent is created whatever the flag
+        says, and "delete: true" removes it whatever the flag says.
+        """
+        for key in self._diff_keys_left_alone_without_overwrite:
+            if isinstance(current.get(key), dict) and current[key].get("exists"):
+                desired[key] = current[key]
         return desired
 
     def _files_and_branches(self, project: Project, configuration: dict) -> list:

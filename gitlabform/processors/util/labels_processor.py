@@ -40,6 +40,26 @@ class LabelsProcessor:
             if key != "enforce" and isinstance(label, dict)
         }
 
+    PROVIDED_BY_AN_ANCESTOR = "(provided by an ancestor group - will not be created)"
+
+    def mark_labels_an_ancestor_provides(
+        self, current: Dict[str, Dict], desired: Dict[str, Dict], group_or_project: Group | Project
+    ) -> Dict:
+        """Replace the wanted state of every configured label that this project/group
+        does not own and cannot be given, because an ancestor group already has it.
+
+        Matched by name, which is how both sides of this diff are keyed.
+        """
+        missing = [name for name in desired if name not in current]
+        if not missing:
+            return desired
+
+        inherited = {label.name for label in group_or_project.labels.list(get_all=True)}
+        return {
+            name: (self.PROVIDED_BY_AN_ANCESTOR if name in missing and name in inherited else wanted)
+            for name, wanted in desired.items()
+        }
+
     def _label_for_diff(self, label: Dict) -> Dict:
         return {k: label[k] for k in self.DIFF_KEYS if label.get(k) is not None}
 

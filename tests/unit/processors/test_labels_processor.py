@@ -194,3 +194,78 @@ class TestGroupLabelsHaveNoAncestorLeak:
         self.processor._get_current_state("some/subgroup")
 
         self.group.labels.list.assert_called_once_with(get_all=True, include_ancestor_groups=False)
+
+
+class TestLabelAnAncestorProvides:
+    def setup_method(self):
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = ProjectLabelsProcessor(MagicMock())
+        self.project = MagicMock()
+        self.processor.gl.get_project_by_path_cached.return_value = self.project
+
+    def _gitlab_has(self, own_labels, inherited_labels):
+        def labels_list(get_all=True, include_ancestor_groups=True):
+            return own_labels if include_ancestor_groups is False else inherited_labels
+
+        self.project.labels.list.side_effect = labels_list
+
+    def _diff(self, configured_labels, caplog):
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("group/project", configured_labels, diff_only_changed=True)
+        return "\n".join(r.message for r in caplog.records if "labels changes" in r.message)
+
+    def test_a_label_the_ancestor_owns_is_not_announced_as_a_creation(self, caplog):
+        ancestors_label = _group_label("goal::v1-creditron")
+        self._gitlab_has(own_labels=[], inherited_labels=[ancestors_label])
+
+        diff = self._diff({"goal::v1-creditron": {"color": "#428bca"}}, caplog)
+
+        assert "goal::v1-creditron" in diff
+        assert "(provided by an ancestor group - will not be created)" in diff
+        assert "#428bca" not in diff
+
+    def test_a_label_nobody_has_is_still_announced_as_a_creation(self, caplog):
+        self._gitlab_has(own_labels=[], inherited_labels=[])
+
+        diff = self._diff({"bug": {"color": "#d9534f"}}, caplog)
+
+        assert "bug" in diff
+        assert "#d9534f" in diff
+        assert "provided by an ancestor group" not in diff
+
+    def test_a_label_the_project_owns_is_diffed_as_before(self, caplog):
+        own = _gitlab_label(color="#428bca")
+        self._gitlab_has(own_labels=[own], inherited_labels=[own])
+
+        diff = self._diff({"bug": {"color": "#d9534f", "description": "Bug reported", "priority": 10}}, caplog)
+
+        assert "bug" in diff
+        assert "#428bca" in diff and "#d9534f" in diff
+        assert "provided by an ancestor group" not in diff
+
+    def test_nothing_missing_means_no_second_call_to_gitlab(self, caplog):
+        own = _gitlab_label()
+        self._gitlab_has(own_labels=[own], inherited_labels=[own])
+
+        self._diff({"bug": {"color": "#d9534f", "description": "Bug reported", "priority": 10}}, caplog)
+
+        assert self.project.labels.list.call_count == 1
+
+
+class TestGroupLabelsAncestorGuardIsANoOp:
+    def setup_method(self):
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = GroupLabelsProcessor(MagicMock())
+        self.group = MagicMock()
+        self.processor.gl.get_group_by_path_cached.return_value = self.group
+
+    def test_a_configured_label_the_group_lacks_is_still_a_creation(self, caplog):
+        self.group.labels.list.return_value = []
+
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("some/group", {"bug": {"color": "#d9534f"}}, diff_only_changed=True)
+        diff = "\n".join(r.message for r in caplog.records if "group_labels changes" in r.message)
+
+        assert "bug" in diff
+        assert "#d9534f" in diff
+        assert "provided by an ancestor group" not in diff

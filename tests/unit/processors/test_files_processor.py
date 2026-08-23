@@ -380,3 +380,48 @@ class TestFilesDiff:
         self.processor._configuration_for_diff = None
 
         assert self.processor._get_current_state("g/p") is None
+
+
+class TestFilesDiffOverwrite:
+    def setup_method(self):
+        self.processor = FilesProcessor(MagicMock(), MagicMock(), strict=False)
+        self.processor.gl = MagicMock()
+        self.project = MagicMock()
+        self.processor.gl.get_project_by_path_cached.return_value = self.project
+        self.project.branches.get.return_value = _make_branch("main")
+
+    def _diff(self, file_config: dict, content_in_gitlab: bytes | None, caplog) -> str:
+        if content_in_gitlab is None:
+            self.project.files.get.side_effect = GitlabGetError("404 File Not Found", response_code=404)
+        else:
+            repo_file = MagicMock()
+            repo_file.decode.return_value = content_in_gitlab
+            self.project.files.get.return_value = repo_file
+
+        configuration = _ConfigDict({"files": {"README.md": {"branches": ["main"], **file_config}}})
+        self.processor._section_is_in_config(configuration)
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("g/p", configuration["files"], diff_only_changed=True)
+        return "\n".join(r.message for r in caplog.records if "files changes" in r.message)
+
+    def test_existing_file_without_overwrite_is_not_announced_as_a_rewrite(self, caplog):
+        diff = self._diff({"content": "# Title\n"}, b"# Old title\n", caplog)
+
+        assert diff == ""
+
+    def test_existing_file_with_overwrite_is_still_announced(self, caplog):
+        diff = self._diff({"content": "# Title\n", "overwrite": True}, b"# Old title\n", caplog)
+
+        assert "README.md @ main" in diff
+        assert "# Old title" in diff and "# Title" in diff
+
+    def test_missing_file_without_overwrite_is_still_announced(self, caplog):
+        diff = self._diff({"content": "# Title\n"}, None, caplog)
+
+        assert "README.md @ main" in diff
+        assert "# Title" in diff
+
+    def test_delete_without_overwrite_is_still_announced(self, caplog):
+        diff = self._diff({"delete": True}, b"# Old title\n", caplog)
+
+        assert "README.md @ main" in diff

@@ -49,3 +49,37 @@ class TestResourceGroupsDiff:
         assert (
             DifferenceLogger.log_diff("resource_groups changes", current, desired, only_changed=True, test=True) == ""
         )
+
+
+class TestResourceGroupsNotInGitLab:
+    @staticmethod
+    def _diff(processor, entity_config: dict, caplog) -> str:
+        with caplog.at_level("INFO"):
+            processor._print_diff("foo/bar", entity_config, diff_only_changed=True)
+        return "\n".join(r.message for r in caplog.records if "resource_groups changes" in r.message)
+
+    def test_missing_resource_group_says_the_apply_will_fail(self, caplog):
+        processor = _make_processor()
+
+        diff = self._diff(processor, {"staging": {"process_mode": "oldest_first"}}, caplog)
+
+        assert "staging" in diff
+        assert "(not in GitLab - apply will fail; see ensure_exists)" in diff
+        assert "oldest_first" not in diff
+
+    def test_missing_resource_group_without_ensure_exists_says_it_is_skipped(self, caplog):
+        processor = _make_processor()
+
+        diff = self._diff(processor, {"ensure_exists": False, "staging": {"process_mode": "oldest_first"}}, caplog)
+
+        assert "staging" in diff
+        assert "(not in GitLab - will be skipped)" in diff
+
+    def test_a_resource_group_gitlab_has_is_diffed_as_before(self, caplog):
+        processor = _make_processor(process_mode="unordered")
+
+        diff = self._diff(processor, {"production": {"process_mode": "oldest_first"}}, caplog)
+
+        assert "production" in diff
+        assert "oldest_first" in diff
+        assert "not in GitLab" not in diff
