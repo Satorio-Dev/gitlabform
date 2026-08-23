@@ -105,6 +105,64 @@ projects_and_groups:
         allow_force_push: true
 ```
 
+### Squash option
+
+Each branch may also carry a `squash_option` key. It sets the *per-branch* squash
+setting of the [branch rule](https://docs.gitlab.com/user/project/merge_requests/squash_and_merge/),
+i.e. what happens to the commits of a merge request whose **target** is that branch.
+
+The valid values are:
+
+* `never` — squashing is not allowed,
+* `allowed` — squashing is offered, off by default,
+* `encouraged` — squashing is offered, on by default,
+* `always` — squashing is required,
+* `inherit` — there must be **no** branch-level setting here; the branch follows the
+  project default from [`project_settings`](settings.md).
+
+`inherit` is not cosmetic: without it an override could be created and changed, but
+never removed, and a branch would be stuck with whatever it was first given.
+
+!!! warning
+
+    These values are **not** the values of the project-level `squash_option` in the
+    [`project_settings`](settings.md) section, which is a different API with a
+    different vocabulary (`never`, `default_off`, `default_on`, `always`).
+    `default_off` does not exist per branch and `allowed` does not exist per project.
+    Passing a project-level value here is rejected with a message that names the
+    branch-level value that means the same thing, rather than being silently accepted.
+
+!!! info
+
+    The branch must be protected. This setting lives on a GitLab *branch rule*, and a
+    branch rule exists only for a protected branch, so `squash_option` together with
+    `protected: false` is rejected. For the same reason it can only be set on a branch
+    name that GitLab has an actual rule for — the project-wide `All branches` /
+    `All protected branches` pseudo-rules are not branches and are rejected by name.
+
+Example:
+
+```yaml
+projects_and_groups:
+  group_1/project_1:
+    branches:
+      # merging into staging must squash
+      staging:
+        protected: true
+        merge_access_level: developer
+        squash_option: always
+      # merging into production must NOT squash
+      production:
+        protected: true
+        merge_access_level: maintainer
+        squash_option: never
+      # drop any branch-level setting; follow the project default
+      'release/*':
+        protected: true
+        merge_access_level: maintainer
+        squash_option: inherit
+```
+
 ### Premium-only features
 
 !!! info

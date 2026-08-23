@@ -26,6 +26,8 @@ class BranchesProcessor(AbstractProcessor):
     'Raw Parameter Passing' (arbitrary keys in config are sent to the API).
     """
 
+    KEYS_APPLIED_BY_ANOTHER_PROCESSOR = ("squash_option",)
+
     def __init__(self, gitlab: GitLab, strict: bool):
         super().__init__("branches", gitlab)
         self.strict = strict
@@ -57,6 +59,12 @@ class BranchesProcessor(AbstractProcessor):
 
         for branch in sorted(configuration["branches"]):
             branch_configuration: dict = self.convert_user_and_group_names_to_ids(configuration["branches"][branch])
+
+            branch_configuration = {
+                key: value
+                for key, value in branch_configuration.items()
+                if key not in self.KEYS_APPLIED_BY_ANOTHER_PROCESSOR
+            }
 
             self.process_branch_protection(project, branch, branch_configuration)
 

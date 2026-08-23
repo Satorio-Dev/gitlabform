@@ -5,6 +5,9 @@ from gitlabform.gitlab import GitLab
 from gitlabform.processors import AbstractProcessors
 from gitlabform.processors.abstract_processor import AbstractProcessor
 from gitlabform.processors.project.badges_processor import BadgesProcessor
+from gitlabform.processors.project.branch_squash_option_processor import (
+    BranchSquashOptionProcessor,
+)
 from gitlabform.processors.project.branches_processor import BranchesProcessor
 from gitlabform.processors.project.deploy_keys_processor import DeployKeysProcessor
 from gitlabform.processors.project.files_processor import FilesProcessor
@@ -66,6 +69,7 @@ class ProjectProcessors(AbstractProcessors):
             DeployKeysProcessor(gitlab),
             ProjectVariablesProcessor(gitlab, log_level),
             BranchesProcessor(gitlab, strict),
+            BranchSquashOptionProcessor(gitlab, strict),
             TagsProcessor(gitlab, strict),
             IntegrationsProcessor(gitlab),
             FilesProcessor(gitlab, config, strict),
