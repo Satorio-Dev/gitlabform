@@ -1,4 +1,5 @@
 import sys
+from copy import deepcopy
 from typing import Optional, Any
 
 from logging import info, warning, error, critical
@@ -13,6 +14,7 @@ from gitlabform.constants import EXIT_INVALID_INPUT, EXIT_PROCESSING_ERROR
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
 from gitlabform.processors.util.branch_protection import BranchProtection
+from gitlabform.processors.util.difference_logger import DifferenceLogger
 
 
 class BranchesProcessor(AbstractProcessor):
@@ -39,6 +41,164 @@ class BranchesProcessor(AbstractProcessor):
         self.custom_diff_analyzers["merge_access_levels"] = BranchProtection.naive_access_level_diff_analyzer
         self.custom_diff_analyzers["push_access_levels"] = BranchProtection.naive_access_level_diff_analyzer
         self.custom_diff_analyzers["unprotect_access_levels"] = BranchProtection.naive_access_level_diff_analyzer
+
+    diff_keys_are_entities = True
+
+    ACCESS_LEVEL_LISTS = ("merge_access_levels", "push_access_levels", "unprotect_access_levels")
+
+    DIFF_IGNORED_KEYS = frozenset({"id", "name"})
+
+    NOT_PROTECTED: dict = {"protected": False}
+
+    PROTECTED_KEY_MISSING = "(missing - 'protected' is mandatory)"
+
+    def _get_current_state(self, project_and_group: str) -> dict:
+        """Protected branches, keyed by branch name. A branch that is not protected is
+        not listed by this endpoint, so it is simply absent here."""
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+
+        current: dict = {}
+        for protected_branch in project.protectedbranches.list(get_all=True):
+            attributes = protected_branch.attributes
+            state: dict = {"protected": True}
+            for key in sorted(attributes):
+                if key in self.DIFF_IGNORED_KEYS:
+                    continue
+                state[key] = (
+                    self._comparable_access_levels(attributes[key])
+                    if key in self.ACCESS_LEVEL_LISTS
+                    else attributes[key]
+                )
+            current[attributes["name"]] = state
+        return current
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        desired: dict = {}
+        for branch_name, branch_config in entity_config.items():
+            if not isinstance(branch_config, dict):
+                continue
+
+            if "protected" not in branch_config:
+                desired[branch_name] = {"protected": self.PROTECTED_KEY_MISSING}
+                continue
+
+            if not branch_config.get("protected"):
+                desired[branch_name] = dict(self.NOT_PROTECTED)
+                continue
+
+            wanted_config = deepcopy(
+                {
+                    key: value
+                    for key, value in branch_config.items()
+                    if key not in self.KEYS_APPLIED_BY_ANOTHER_PROCESSOR
+                }
+            )
+            transformed = BranchProtection.map_config_to_protected_branch_get_data(
+                self.convert_user_and_group_names_to_ids(wanted_config)
+            )
+
+            state: dict = {"protected": True}
+            for key in sorted(transformed):
+                state[key] = (
+                    self._comparable_access_levels(transformed[key])
+                    if key in self.ACCESS_LEVEL_LISTS
+                    else transformed[key]
+                )
+            desired[branch_name] = state
+        return desired
+
+    def _print_diff(self, project_or_project_and_group: str, entity_config, diff_only_changed: bool) -> None:
+        """Print what each configured branch looks like now and what it will look like
+        after apply, keeping every protected branch the config does not mention whole on
+        the removal side."""
+        current = self._get_current_state(project_or_project_and_group)
+        desired = self._get_desired_state(entity_config)
+
+        current_for_diff = dict(current)
+        desired_for_diff: dict = {}
+
+        for branch_name, wanted in desired.items():
+            live = current.get(branch_name)
+
+            if live is None:
+                current_for_diff[branch_name] = dict(self.NOT_PROTECTED)
+                desired_for_diff[branch_name] = wanted
+                continue
+
+            if not wanted.get("protected"):
+                current_for_diff[branch_name] = {"protected": True}
+                desired_for_diff[branch_name] = wanted
+                continue
+
+            live_view: dict = {}
+            wanted_view: dict = {}
+            for key, wanted_value in wanted.items():
+                live_value = live.get(key, "???")
+                if key in self.ACCESS_LEVEL_LISTS and isinstance(live_value, list):
+                    wanted_view[key] = self._projected_access_levels(live_value, wanted_value)
+                else:
+                    wanted_view[key] = wanted_value
+                live_view[key] = live_value
+            current_for_diff[branch_name] = live_view
+            desired_for_diff[branch_name] = wanted_view
+
+        DifferenceLogger.log_diff(
+            f"{self.configuration_name} changes",
+            current_for_diff,
+            desired_for_diff,
+            only_changed=diff_only_changed,
+            removed_marker=self._diff_removed_marker(entity_config),
+        )
+
+    @staticmethod
+    def _comparable_access_levels(access_levels) -> list:
+        """One entry per rule, carrying only what decides whether it is the same rule:
+        the role and the user, group or deploy key it is granted to. The id and the
+        description GitLab adds take no part in the comparison the apply path makes."""
+        if not isinstance(access_levels, list):
+            return access_levels
+
+        identity_keys = ("access_level", "user_id", "group_id", "deploy_key_id")
+        comparable = []
+        for entry in access_levels:
+            if not isinstance(entry, dict):
+                comparable.append(entry)
+                continue
+            comparable.append({key: entry[key] for key in identity_keys if entry.get(key) is not None})
+        return sorted(comparable, key=lambda rule: sorted(rule.items()) if isinstance(rule, dict) else [])
+
+    @classmethod
+    def _projected_access_levels(cls, live: list, wanted: list) -> list:
+        """What the list will hold after apply: gitlabform is additive, so every rule
+        GitLab has survives, except where it collides with a "No Access" rule - level 0
+        is mutually exclusive with any other role."""
+        wanted_role_levels = {rule.get("access_level") for rule in wanted if cls._is_role_rule(rule)}
+        no_access_wanted = 0 in wanted_role_levels
+        roles_wanted = any(level for level in wanted_role_levels if level)
+
+        projected = [
+            rule
+            for rule in live
+            if not (
+                cls._is_role_rule(rule)
+                and (
+                    (no_access_wanted and rule.get("access_level")) or (roles_wanted and rule.get("access_level") == 0)
+                )
+            )
+        ]
+        projected += [rule for rule in wanted if not any(cls._is_same_rule(rule, kept) for kept in projected)]
+        return cls._comparable_access_levels(projected)
+
+    @staticmethod
+    def _is_role_rule(rule: dict) -> bool:
+        return not (rule.get("user_id") or rule.get("group_id") or rule.get("deploy_key_id"))
+
+    @classmethod
+    def _is_same_rule(cls, one: dict, other: dict) -> bool:
+        for key in ("user_id", "group_id", "deploy_key_id"):
+            if one.get(key) is not None:
+                return one.get(key) == other.get(key)
+        return cls._is_role_rule(other) and one.get("access_level") == other.get("access_level")
 
     def _can_proceed(self, project_or_group: str, configuration: dict):
         for branch in sorted(configuration["branches"]):

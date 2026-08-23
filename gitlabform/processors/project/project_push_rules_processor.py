@@ -1,4 +1,6 @@
 from logging import debug
+from typing import Dict
+
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
 from gitlab.v4.objects.projects import Project
@@ -8,6 +10,24 @@ from gitlab.exceptions import GitlabGetError, GitlabParsingError
 class ProjectPushRulesProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("project_push_rules", gitlab)
+
+    def _get_current_state(self, project_path: str) -> Dict:
+        """The project's push rules, or an empty state when it has none yet.
+
+        A project that never had them answers either with a 404 or - see
+        https://gitlab.com/gitlab-org/gitlab/-/issues/513331 - with a `null` body that
+        python-gitlab cannot parse. Both mean "not configured yet", which is what the
+        apply path acts on.
+        """
+        project: Project = self.gl.get_project_by_path_cached(project_path)
+        try:
+            return project.pushrules.get().asdict()
+        except GitlabGetError as e:
+            if e.response_code == 404:
+                return {}
+            raise
+        except GitlabParsingError:
+            return {}
 
     def _process_configuration(self, project_path: str, configuration: dict):
         configured_project_push_rules = configuration.get("project_push_rules", {})
