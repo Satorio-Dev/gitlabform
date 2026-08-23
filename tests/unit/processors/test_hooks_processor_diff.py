@@ -89,3 +89,18 @@ class TestHooksDiff:
         assert diff != ""
         assert "very-secret-token" not in diff
         assert "<secret " in diff
+
+    def test__hook_marked_for_deletion_reads_as_a_deletion(self, caplog) -> None:
+        processor = _make_processor([HOOK_IN_GITLAB])
+
+        diff = _diff(processor, {"http://example.com/hook": {"delete": True}}, caplog)
+
+        assert "http://example.com/hook" in diff
+        assert "(will be deleted)" in diff
+
+    def test__hook_marked_for_deletion_that_does_not_exist_is_still_named(self, caplog) -> None:
+        processor = _make_processor([])
+
+        diff = _diff(processor, {"http://example.com/hook": {"delete": True}}, caplog)
+
+        assert "(will be deleted)" in diff

@@ -1,5 +1,6 @@
 from datetime import date
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from gitlabform.processors.group.group_members_processor import GroupMembersProcessor
 
@@ -173,3 +174,108 @@ class TestGroupMembersDryRunDiff:
 
         assert "group:fabio/fabio" in caplog.text
         assert "(will be removed by enforce)" in caplog.text
+
+
+class TestGroupMembersDiffKeepBots:
+    def setup_method(self):
+        self.processor = GroupMembersProcessor.__new__(GroupMembersProcessor)
+        self.processor.gl = MagicMock()
+        self.processor.configuration_name = "group_members"
+
+    @staticmethod
+    def _mock_member(username, access_level=30, expires_at=None):
+        member = MagicMock(spec=["username", "access_level", "expires_at"])
+        member.username = username
+        member.access_level = access_level
+        member.expires_at = expires_at
+        return member
+
+    def _gitlab_has_a_bot_and_a_human(self, shared_with_groups=None):
+        group = self.processor.gl.get_group_by_path_cached.return_value
+        group.members.list.return_value = [
+            self._mock_member("RaymondSmith"),
+            self._mock_member("group_1_bot_a1b2c3"),
+        ]
+        group.shared_with_groups = shared_with_groups or []
+        self.processor.gl.get_user_by_username_cached.side_effect = lambda username: SimpleNamespace(
+            bot="_bot_" in username
+        )
+
+    def _current_side_of_diff(self, config: dict) -> dict:
+        with patch("gitlabform.processors.group.group_members_processor.DifferenceLogger") as logger:
+            self.processor._print_diff("some/group", config, diff_only_changed=True)
+        return logger.log_diff.call_args[0][1]
+
+    def test_an_unconfigured_bot_is_not_shown_leaving_when_keep_bots_is_on(self):
+        self._gitlab_has_a_bot_and_a_human()
+
+        current = self._current_side_of_diff(
+            {"enforce": True, "keep_bots": True, "users": {"raymondsmith": {"access_level": 40}}}
+        )
+
+        assert "user:group_1_bot_a1b2c3" not in current
+        assert "user:raymondsmith" in current
+
+    def test_an_unconfigured_bot_is_not_shown_leaving_without_enforce_either(self):
+        self._gitlab_has_a_bot_and_a_human()
+
+        current = self._current_side_of_diff({"keep_bots": True, "users": {"raymondsmith": {"access_level": 40}}})
+
+        assert "user:group_1_bot_a1b2c3" not in current
+
+    def test_an_unconfigured_bot_is_still_shown_leaving_when_keep_bots_is_off(self):
+        self._gitlab_has_a_bot_and_a_human()
+
+        current = self._current_side_of_diff({"enforce": True, "users": {"raymondsmith": {"access_level": 40}}})
+
+        assert "user:group_1_bot_a1b2c3" in current
+
+    def test_the_enforce_removal_line_is_gone_for_a_kept_bot(self, caplog):
+        self._gitlab_has_a_bot_and_a_human()
+
+        with caplog.at_level("INFO"):
+            self.processor._print_diff(
+                "some/group",
+                {"enforce": True, "keep_bots": True, "users": {"raymondsmith": {"access_level": 30}}},
+                diff_only_changed=True,
+            )
+
+        assert "group_1_bot_a1b2c3" not in caplog.text
+        assert "(will be removed by enforce)" not in caplog.text
+
+    def test_a_configured_bot_is_still_diffed_when_keep_bots_is_on(self):
+        self._gitlab_has_a_bot_and_a_human()
+
+        current = self._current_side_of_diff(
+            {
+                "enforce": True,
+                "keep_bots": True,
+                "users": {"raymondsmith": {"access_level": 40}, "group_1_bot_a1b2c3": {"access_level": 40}},
+            }
+        )
+
+        assert current["user:group_1_bot_a1b2c3"]["access_level"] == 30
+
+    def test_a_human_member_is_never_spared(self):
+        self._gitlab_has_a_bot_and_a_human()
+
+        current = self._current_side_of_diff({"enforce": True, "keep_bots": True, "users": {}})
+
+        assert "user:raymondsmith" in current
+
+    def test_a_shared_group_is_never_spared(self):
+        self._gitlab_has_a_bot_and_a_human(
+            shared_with_groups=[
+                {
+                    "group_id": 28,
+                    "group_name": "Fabio",
+                    "group_full_path": "fabio/fabio",
+                    "group_access_level": 50,
+                    "expires_at": None,
+                }
+            ]
+        )
+
+        current = self._current_side_of_diff({"enforce": True, "keep_bots": True, "users": {}})
+
+        assert "group:fabio/fabio" in current

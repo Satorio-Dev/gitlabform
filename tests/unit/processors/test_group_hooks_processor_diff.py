@@ -82,3 +82,31 @@ class TestGroupHooksDiff:
         processor = _make_processor([], enterprise=False)
 
         assert processor._get_current_state("some_group") is None
+
+
+class TestGroupHooksDiffThroughPrintDiff:
+    @staticmethod
+    def _diff(processor, entity_config: dict, caplog) -> str:
+        with caplog.at_level("INFO"):
+            processor._print_diff("some_group", entity_config, diff_only_changed=True)
+        return "\n".join(r.message for r in caplog.records if "group_hooks changes" in r.message)
+
+    def test__key_the_config_does_not_declare_is_not_a_difference(self, caplog) -> None:
+        processor = _make_processor([HOOK_IN_GITLAB])
+
+        assert self._diff(processor, {"http://example.com/hook": {"push_events": True}}, caplog) == ""
+
+    def test__hook_only_in_gitlab_is_reported_as_removed_by_enforce(self, caplog) -> None:
+        processor = _make_processor([HOOK_IN_GITLAB])
+
+        diff = self._diff(processor, {"enforce": True, "http://other.example.com/hook": HOOK_CONFIG}, caplog)
+
+        assert "http://example.com/hook" in diff
+        assert "(will be removed by enforce)" in diff
+
+    def test__hook_marked_for_deletion_reads_as_a_deletion(self, caplog) -> None:
+        processor = _make_processor([HOOK_IN_GITLAB])
+
+        diff = self._diff(processor, {"http://example.com/hook": {"delete": True}}, caplog)
+
+        assert "(will be deleted)" in diff

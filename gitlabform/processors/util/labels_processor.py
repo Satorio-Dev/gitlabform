@@ -11,8 +11,27 @@ class LabelsProcessor:
     def get_current_labels_for_diff(self, group_or_project: Group | Project) -> Dict[str, Dict]:
         """Return the labels created directly on the project/group (the only ones
         managed here), keyed by label name, for the centralized dry-run diff."""
-        labels = group_or_project.labels.list(get_all=True, include_ancestor_groups=False)
-        return {label.name: self._label_for_diff(label.asdict()) for label in labels}
+        return {label.name: self._label_for_diff(label.asdict()) for label in self.list_own_labels(group_or_project)}
+
+    def list_own_labels(self, group_or_project: Group | Project) -> List:
+        """The labels this project/group owns - the only ones this section may touch.
+
+        Asking for "include_ancestor_groups=false" is not enough: the projects API
+        returns the ancestor groups' labels anyway, flagged "is_project_label": false.
+        A label whose response carries no such flag is kept, because absence of the
+        field means "cannot tell" and the safe side of that is noise rather than a
+        silent deletion of somebody else's label.
+        """
+        return [
+            label
+            for label in group_or_project.labels.list(get_all=True, include_ancestor_groups=False)
+            if not self._belongs_to_an_ancestor(label)
+        ]
+
+    @staticmethod
+    def _belongs_to_an_ancestor(label) -> bool:
+        attributes = label.asdict() if hasattr(label, "asdict") else label
+        return attributes.get("is_project_label") is False
 
     def get_desired_labels_for_diff(self, configured_labels: Dict) -> Dict[str, Dict]:
         return {
@@ -33,7 +52,7 @@ class LabelsProcessor:
         needs_update: Callable,  # self._needs_update passed from AbstractProcessor called process_labels
     ):
         # Only get Labels created directly on the project/group
-        existing_group_labels = group_or_project.labels.list(get_all=True, include_ancestor_groups=False)
+        existing_group_labels = self.list_own_labels(group_or_project)
         existing_group_and_parent_labels = group_or_project.labels.list(get_all=True)
         existing_label_keys: List = []
 
