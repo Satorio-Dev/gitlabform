@@ -58,6 +58,7 @@ class TestGroupMembersDryRunDiff:
     def setup_method(self):
         self.processor = GroupMembersProcessor.__new__(GroupMembersProcessor)
         self.processor.gl = MagicMock()
+        self.processor.configuration_name = "group_members"
 
     @staticmethod
     def _diff(current: dict, desired: dict) -> str:
@@ -127,3 +128,48 @@ class TestGroupMembersDryRunDiff:
         desired = self.processor._get_desired_state({"enforce": True, "keep_bots": True, "bob": {"access_level": 50}})
 
         assert desired == {"user:bob": {"access_level": 50, "expires_at": None}}
+
+    def test__member_only_in_gitlab_is_named_as_removed_by_enforce(self, caplog):
+        self._set_gitlab_state(members=[self._mock_member(username="LeftBehind", access_level=30)])
+
+        with caplog.at_level("INFO"):
+            self.processor._print_diff(
+                "some/group",
+                {"enforce": True, "raymondsmith": {"access_level": 40}},
+                diff_only_changed=True,
+            )
+
+        assert "user:leftbehind" in caplog.text
+        assert "(will be removed by enforce)" in caplog.text
+
+    def test__member_only_in_gitlab_without_enforce_is_named_as_such(self, caplog):
+        self._set_gitlab_state(members=[self._mock_member(username="LeftBehind", access_level=30)])
+
+        with caplog.at_level("INFO"):
+            self.processor._print_diff(
+                "some/group",
+                {"raymondsmith": {"access_level": 40}},
+                diff_only_changed=True,
+            )
+
+        assert "user:leftbehind" in caplog.text
+        assert "(only in GitLab)" in caplog.text
+
+    def test__shared_group_only_in_gitlab_is_named_too(self, caplog):
+        self._set_gitlab_state(
+            shared_with_groups=[
+                {
+                    "group_id": 28,
+                    "group_name": "Fabio",
+                    "group_full_path": "fabio/fabio",
+                    "group_access_level": 50,
+                    "expires_at": None,
+                }
+            ],
+        )
+
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("some/group", {"enforce": True}, diff_only_changed=True)
+
+        assert "group:fabio/fabio" in caplog.text
+        assert "(will be removed by enforce)" in caplog.text

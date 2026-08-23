@@ -16,6 +16,8 @@ class SchedulesProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("schedules", gitlab)
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_and_group: str) -> Dict:
         """Pipeline schedules, keyed by description, for the centralized dry-run diff.
         The list endpoint does not include variables, so each schedule is re-read by id.

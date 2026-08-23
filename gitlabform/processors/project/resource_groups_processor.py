@@ -10,6 +10,8 @@ class ResourceGroupsProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("resource_groups", gitlab)
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_and_group: str) -> dict:
         project: Project = self.gl.get_project_by_path_cached(project_and_group)
         return {

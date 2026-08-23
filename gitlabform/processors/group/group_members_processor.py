@@ -279,6 +279,8 @@ class GroupMembersProcessor(AbstractProcessor):
             users[member.username.lower()] = member
         return users
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, group_name: str) -> dict:
         group = self.gl.get_group_by_path_cached(group_name)
 

@@ -11,6 +11,10 @@ def hide(text: str):
     return f"<secret {hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]}>"
 
 
+REMOVED_BY_ENFORCE = "(will be removed by enforce)"
+ONLY_IN_GITLAB = "(only in GitLab)"
+
+
 class DifferenceLogger:
     @staticmethod
     def log_diff(
@@ -20,7 +24,14 @@ class DifferenceLogger:
         only_changed=False,
         hide_entries=None,
         test=False,
+        removed_marker=None,
     ):
+        """Render the difference between the current state and the one to apply.
+
+        :param removed_marker: what to show in place of the "to be applied" value of a
+            key that ``current_config`` has and ``config_to_apply`` does not. Passing it
+            is what enables that side of the diff at all.
+        """
         # Compose values in list of `[key, from_config, from_server]``
         changes = [
             [
@@ -46,6 +57,15 @@ class DifferenceLogger:
                     changes,
                 )
             )
+
+        if removed_marker is not None and isinstance(current_config, dict):
+            for key in current_config:
+                if key in config_to_apply:
+                    continue
+                current_value = json.dumps(current_config[key])
+                if hide_entries and key in hide_entries:
+                    current_value = hide(current_value)
+                changes.append([key, current_value, removed_marker])
 
         # There is the potential that no changes need to be shown, which
         # results in the calls to max() later on to fail. Instead, opting

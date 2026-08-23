@@ -12,6 +12,8 @@ class TagsProcessor(AbstractProcessor):
         super().__init__("tags", gitlab)
         self.strict = strict
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_and_group: str) -> dict:
         """Protected tags, keyed by tag name, for the centralized dry-run diff.
         Tags that are not protected are not listed by this endpoint, so a tag

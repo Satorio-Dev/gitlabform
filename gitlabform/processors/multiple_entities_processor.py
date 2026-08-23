@@ -54,6 +54,8 @@ class MultipleEntitiesProcessor(AbstractProcessor, metaclass=abc.ABCMeta):
 
     diff_ignored_keys: frozenset = frozenset({"id", "_links"})
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_or_group: str) -> dict:
         current_state = {}
         for entity in self.list_method(project_or_group):

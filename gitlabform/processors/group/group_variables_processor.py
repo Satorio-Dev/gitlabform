@@ -28,6 +28,8 @@ class GroupVariablesProcessor(AbstractProcessor):
 
         self._variables_processor.process_variables(group, configured_variables, enforce_mode)
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_and_group: str) -> Dict[str, Dict[str, Any]]:
         try:
             group: Group = self.gl.get_group_by_path_cached(project_and_group)

@@ -9,7 +9,11 @@ from gitlabform.gitlab import GitLab, PythonGitlab
 from gitlabform.gitlab import GitlabWrapper
 from gitlabform.output import EffectiveConfigurationFile
 from gitlabform.processors.util.decorators import configuration_to_safe_dict
-from gitlabform.processors.util.difference_logger import DifferenceLogger
+from gitlabform.processors.util.difference_logger import (
+    DifferenceLogger,
+    ONLY_IN_GITLAB,
+    REMOVED_BY_ENFORCE,
+)
 
 
 class AbstractProcessor(ABC):
@@ -125,6 +129,16 @@ class AbstractProcessor(ABC):
     def _process_configuration(self, project_or_project_and_group: str, configuration: dict):
         pass
 
+    diff_keys_are_entities: bool = False
+
+    def _diff_removed_marker(self, entity_config) -> Optional[str]:
+        """What to show for an entity that is in GitLab and not in the config, or None
+        to keep that side of the diff off for this section."""
+        if not self.diff_keys_are_entities:
+            return None
+        enforce = isinstance(entity_config, dict) and bool(entity_config.get("enforce", False))
+        return REMOVED_BY_ENFORCE if enforce else ONLY_IN_GITLAB
+
     def _get_current_state(self, project_or_project_and_group: str) -> Optional[dict]:
         """Fetch the current state from GitLab for the centralized dry-run diff.
 
@@ -151,6 +165,7 @@ class AbstractProcessor(ABC):
             current,
             desired,
             only_changed=diff_only_changed,
+            removed_marker=self._diff_removed_marker(entity_config),
         )
 
     def _needs_update(

@@ -14,6 +14,8 @@ class GroupLabelsProcessor(AbstractProcessor):
         super().__init__("group_labels", gitlab)
         self._labels_processor = LabelsProcessor()
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, group_path_and_name: str) -> Dict[str, Dict]:
         group: Group = self.gl.get_group_by_path_cached(group_path_and_name)
         return self._labels_processor.get_current_labels_for_diff(group)

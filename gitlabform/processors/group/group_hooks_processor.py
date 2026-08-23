@@ -27,6 +27,8 @@ class GroupHooksProcessor(AbstractProcessor):
 
     DIFF_IGNORED_KEYS = frozenset({"id", "group_id", "created_at"})
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, group_path_and_name: str) -> Optional[dict]:
         if not self.gitlab.enterprise:
             return None

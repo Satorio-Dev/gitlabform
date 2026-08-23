@@ -13,6 +13,8 @@ class ProjectLabelsProcessor(AbstractProcessor):
         super().__init__("labels", gitlab)
         self._labels_processor = LabelsProcessor()
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_and_group: str) -> Dict[str, Dict]:
         project: Project = self.gl.get_project_by_path_cached(project_and_group)
         return self._labels_processor.get_current_labels_for_diff(project)

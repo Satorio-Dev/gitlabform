@@ -14,6 +14,8 @@ class IntegrationsProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("integrations", gitlab)
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_and_group: str) -> dict:
         """The active integrations, keyed by slug, with the password-type properties
         hidden: GitLab does not return their values, so they can never be compared and

@@ -42,6 +42,7 @@ class TestPrintDiff:
             {"foo": "from-gitlab"},
             {"foo": "from-config"},
             only_changed=True,
+            removed_marker=None,
         )
 
     def test_current_state_receives_project_path(self) -> None:
@@ -79,7 +80,62 @@ class TestPrintDiff:
             {"foo": "gl:x"},
             {"foo": "cfg:y"},
             only_changed=False,
+            removed_marker=None,
         )
+
+
+class TestRemovedSideOfTheDiff:
+    """Which sections report an entity that is in GitLab and not in the config."""
+
+    class _EntityKeyedProcessor(_TestableProcessor):
+        diff_keys_are_entities = True
+
+        def _get_current_state(self, project_or_project_and_group):
+            return {"kept": {"access_level": 30}, "gone": {"access_level": 40}}
+
+    @staticmethod
+    def _make(cls, name="test_section"):
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            return cls(name, MagicMock(GitLab))
+
+    def test_attribute_keyed_section_reports_no_removals(self, caplog) -> None:
+        class SettingsLikeProcessor(_TestableProcessor):
+            def _get_current_state(self, project_or_project_and_group):
+                return {"declared": 1, "never_configured": "whatever"}
+
+        processor = self._make(SettingsLikeProcessor)
+
+        with caplog.at_level("INFO"):
+            processor._print_diff("group/project", {"declared": 1}, diff_only_changed=True)
+
+        assert "never_configured" not in caplog.text
+
+    def test_entity_keyed_section_without_enforce_says_only_in_gitlab(self, caplog) -> None:
+        processor = self._make(self._EntityKeyedProcessor)
+
+        with caplog.at_level("INFO"):
+            processor._print_diff("group/project", {"kept": {"access_level": 30}}, diff_only_changed=True)
+
+        assert "gone" in caplog.text
+        assert "(only in GitLab)" in caplog.text
+
+    def test_entity_keyed_section_with_enforce_says_it_will_be_removed(self, caplog) -> None:
+        processor = self._make(self._EntityKeyedProcessor)
+
+        with caplog.at_level("INFO"):
+            processor._print_diff(
+                "group/project",
+                {"enforce": True, "kept": {"access_level": 30}},
+                diff_only_changed=True,
+            )
+
+        assert "gone" in caplog.text
+        assert "(will be removed by enforce)" in caplog.text
+
+    def test_marker_is_none_for_a_section_that_is_not_entity_keyed(self) -> None:
+        processor = self._make(_TestableProcessor)
+
+        assert processor._diff_removed_marker({"enforce": True}) is None
 
 
 class TestEmptySectionInDryRun:

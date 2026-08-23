@@ -41,6 +41,8 @@ class ProjectVariablesProcessor(AbstractProcessor):
             warning(f"Cannot get project settings for {project_or_group}")
             return False
 
+    diff_keys_are_entities = True
+
     def _get_current_state(self, project_and_group: str) -> Dict[str, Dict[str, Any]]:
         try:
             project: Project = self.gl.get_project_by_path_cached(project_and_group)
