@@ -126,20 +126,17 @@ class TestMergeRequestsApprovalRulesDryRunDiff:
         with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
             self.processor = MergeRequestsApprovalRules(self.gitlab)
 
-    @staticmethod
-    def _diff(current: dict, desired: dict) -> str:
-        from gitlabform.processors.util.difference_logger import DifferenceLogger
-
-        return DifferenceLogger.log_diff(
-            "merge_requests_approval_rules changes", current, desired, only_changed=True, test=True
-        )
+    def _diff(self, config: dict, caplog) -> str:
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("foo/bar", config, diff_only_changed=True)
+        return "\n".join(r.message for r in caplog.records if "merge_requests_approval_rules changes" in r.message)
 
     @staticmethod
-    def _gitlab_rule(approvals_required=1, users=None):
+    def _gitlab_rule(approvals_required=1, users=None, name="security", rule_type="regular"):
         return {
             "id": 1,
-            "name": "security",
-            "rule_type": "regular",
+            "name": name,
+            "rule_type": rule_type,
             "report_type": None,
             "eligible_approvers": [{"id": 5, "username": "jdoe"}],
             "approvals_required": approvals_required,
@@ -150,42 +147,53 @@ class TestMergeRequestsApprovalRulesDryRunDiff:
             "applies_to_all_protected_branches": False,
         }
 
-    def test__differing_approvals_required_shows_in_diff(self):
-        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule(approvals_required=1)]
-        config = {
-            "security rule": {
-                "name": "security",
-                "approvals_required": 2,
-                "user_ids": [5],
-                "protected_branches": ["main"],
-                "applies_to_all_protected_branches": False,
-            }
+    @staticmethod
+    def _config(**overrides):
+        rule = {
+            "name": "security",
+            "approvals_required": 1,
+            "user_ids": [5],
+            "protected_branches": ["main"],
         }
+        rule.update(overrides)
+        return {"security rule": rule}
 
-        text = self._diff(
-            self.processor._get_current_state("foo/bar"),
-            self.processor._get_desired_state(config),
-        )
+    def test__differing_approvals_required_shows_in_diff(self, caplog):
+        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule(approvals_required=1)]
+
+        text = self._diff(self._config(approvals_required=2), caplog)
 
         assert "security" in text
         assert "2" in text
 
-    def test__matching_state_is_silent_despite_different_shapes(self):
+    def test__matching_state_is_silent_despite_different_shapes(self, caplog):
         self.gitlab.get_approval_rules.return_value = [self._gitlab_rule()]
-        config = {
-            "security rule": {
-                "name": "security",
-                "approvals_required": 1,
-                "user_ids": [5],
-                "protected_branches": ["main"],
-                "applies_to_all_protected_branches": False,
-            }
-        }
 
-        assert (
-            self._diff(
-                self.processor._get_current_state("foo/bar"),
-                self.processor._get_desired_state(config),
-            )
-            == ""
-        )
+        assert self._diff(self._config(applies_to_all_protected_branches=False), caplog) == ""
+
+    def test__key_the_config_does_not_declare_is_not_a_difference(self, caplog):
+        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule()]
+
+        assert self._diff(self._config(), caplog) == ""
+
+    def test__rule_type_declared_and_equal_is_silent(self, caplog):
+        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule(rule_type="regular")]
+
+        assert self._diff(self._config(rule_type="regular"), caplog) == ""
+
+    def test__rule_type_declared_and_different_is_reported(self, caplog):
+        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule(rule_type="regular")]
+
+        text = self._diff(self._config(rule_type="any_approver"), caplog)
+
+        assert "any_approver" in text
+
+    def test__rule_only_in_gitlab_is_reported_as_removed_by_enforce(self, caplog):
+        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule(name="legacy")]
+        config = self._config()
+        config["enforce"] = True
+
+        text = self._diff(config, caplog)
+
+        assert "legacy" in text
+        assert "(will be removed by enforce)" in text

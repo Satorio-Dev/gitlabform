@@ -24,11 +24,14 @@ class MergeRequestsApprovalRules(MultipleEntitiesProcessor):
             self._normalize_rule_from_config(entity_in_configuration),
         )
 
+    SERVER_GENERATED_KEYS = frozenset({"id", "report_type", "eligible_approvers", "contains_hidden_groups"})
+
     def _get_current_state(self, project_and_group: str) -> dict[str, dict[str, Any]]:
-        server_only_keys = {"id", "rule_type", "report_type", "eligible_approvers", "contains_hidden_groups"}
         return {
             rule["name"]: {
-                k: v for k, v in sorted(self._normalize_rule_from_gitlab(rule).items()) if k not in server_only_keys
+                k: v
+                for k, v in sorted(self._normalize_rule_from_gitlab(rule).items())
+                if k not in self.SERVER_GENERATED_KEYS
             }
             for rule in self.list_method(project_and_group)
         }

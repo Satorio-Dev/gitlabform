@@ -49,6 +49,7 @@ class DeployKeysProcessor(MultipleEntitiesProcessor):
             "fingerprint",
             "fingerprint_sha256",
             "created_at",
+            "last_used_at",
             "projects_with_write_access",
         }
         return {

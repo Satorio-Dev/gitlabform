@@ -130,6 +130,21 @@ class AbstractProcessor(ABC):
         pass
 
     diff_keys_are_entities: bool = False
+    diff_ignores_undeclared_keys: bool = False
+
+    @staticmethod
+    def _keep_only_declared_keys(current: dict, desired: dict) -> dict:
+        """Drop from each entity of the current state the keys its counterpart in the
+        desired state does not declare. Entities the config does not mention are left
+        whole - the removal side of the diff reports them in full."""
+        comparable = {}
+        for identity, state in current.items():
+            wanted = desired.get(identity)
+            if isinstance(state, dict) and isinstance(wanted, dict):
+                comparable[identity] = {key: value for key, value in state.items() if key in wanted}
+            else:
+                comparable[identity] = state
+        return comparable
 
     def _diff_removed_marker(self, entity_config) -> Optional[str]:
         """What to show for an entity that is in GitLab and not in the config, or None
@@ -160,6 +175,9 @@ class AbstractProcessor(ABC):
             return
 
         desired = self._get_desired_state(entity_config)
+        if self.diff_ignores_undeclared_keys:
+            current = self._keep_only_declared_keys(current, desired)
+
         DifferenceLogger.log_diff(
             f"{self.configuration_name} changes",
             current,
