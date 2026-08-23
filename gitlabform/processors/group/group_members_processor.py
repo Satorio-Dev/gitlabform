@@ -278,3 +278,51 @@ class GroupMembersProcessor(AbstractProcessor):
         for member in members:
             users[member.username.lower()] = member
         return users
+
+    def _get_current_state(self, group_name: str) -> dict:
+        group = self.gl.get_group_by_path_cached(group_name)
+
+        current: Dict[str, dict] = {}
+        for member in group.members.list(get_all=True):
+            entry = {
+                "access_level": member.access_level,
+                "expires_at": member.expires_at,
+            }
+            member_role = getattr(member, "member_role", None)
+            if member_role:
+                entry["member_role"] = member_role.get("name")
+            current[f"user:{member.username.lower()}"] = entry
+
+        for shared_with_group in group.shared_with_groups:
+            current[f"group:{shared_with_group['group_full_path']}"] = {
+                "group_access": shared_with_group["group_access_level"],
+                "expires_at": shared_with_group["expires_at"],
+            }
+
+        return current
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        users_in_config = entity_config.get("users") or {
+            username: user_config
+            for username, user_config in entity_config.items()
+            if username not in {"enforce", "keep_bots", "users", "groups"} and isinstance(user_config, dict)
+        }
+        groups_in_config = entity_config.get("groups", {})
+
+        desired: Dict[str, dict] = {}
+        for username, user_config in users_in_config.items():
+            entry = {
+                "access_level": user_config.get("access_level"),
+                "expires_at": format_expires_at(user_config.get("expires_at")),
+            }
+            if "member_role" in user_config:
+                entry["member_role"] = user_config["member_role"]
+            desired[f"user:{username.lower()}"] = entry
+
+        for group_path, group_config in groups_in_config.items():
+            desired[f"group:{group_path}"] = {
+                "group_access": group_config.get("group_access"),
+                "expires_at": format_expires_at(group_config.get("expires_at")),
+            }
+
+        return desired

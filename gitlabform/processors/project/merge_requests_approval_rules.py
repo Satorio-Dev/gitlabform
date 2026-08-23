@@ -1,3 +1,5 @@
+from typing import Any
+
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.defining_keys import Key, And
 from gitlabform.processors.multiple_entities_processor import MultipleEntitiesProcessor
@@ -17,6 +19,29 @@ class MergeRequestsApprovalRules(MultipleEntitiesProcessor):
         )
 
     def _needs_update(self, entity_in_gitlab: dict, entity_in_configuration: dict) -> bool:
+        return super()._needs_update(
+            self._normalize_rule_from_gitlab(entity_in_gitlab),
+            self._normalize_rule_from_config(entity_in_configuration),
+        )
+
+    def _get_current_state(self, project_and_group: str) -> dict[str, dict[str, Any]]:
+        server_only_keys = {"id", "rule_type", "report_type", "eligible_approvers", "contains_hidden_groups"}
+        return {
+            rule["name"]: {
+                k: v for k, v in sorted(self._normalize_rule_from_gitlab(rule).items()) if k not in server_only_keys
+            }
+            for rule in self.list_method(project_and_group)
+        }
+
+    def _get_desired_state(self, entity_config: dict) -> dict[str, dict[str, Any]]:
+        return {
+            rule["name"]: dict(sorted(self._normalize_rule_from_config(rule).items()))
+            for alias, rule in entity_config.items()
+            if alias != "enforce" and isinstance(rule, dict)
+        }
+
+    @staticmethod
+    def _normalize_rule_from_gitlab(entity_in_gitlab: dict) -> dict:
         # GitLab returns users/groups as lists of objects and protected_branches as list
         # of objects with a "name" field, while the config (post-transform) has user_ids /
         # group_ids as int lists and protected_branches as list of names. Without
@@ -27,12 +52,14 @@ class MergeRequestsApprovalRules(MultipleEntitiesProcessor):
         gitlab_norm["user_ids"] = sorted(u["id"] for u in gitlab_norm.pop("users", []))
         gitlab_norm["group_ids"] = sorted(g["id"] for g in gitlab_norm.pop("groups", []))
         gitlab_norm["protected_branches"] = sorted(b["name"] for b in gitlab_norm.get("protected_branches", []))
+        return gitlab_norm
 
+    @staticmethod
+    def _normalize_rule_from_config(entity_in_configuration: dict) -> dict:
         # edit_approval_rule treats missing user_ids/group_ids/protected_branches
         # in config as "clear them", so mirror that here to keep the comparison honest.
         config_norm = dict(entity_in_configuration)
         config_norm["user_ids"] = sorted(config_norm.get("user_ids", []))
         config_norm["group_ids"] = sorted(config_norm.get("group_ids", []))
         config_norm["protected_branches"] = sorted(config_norm.get("protected_branches", []))
-
-        return super()._needs_update(gitlab_norm, config_norm)
+        return config_norm

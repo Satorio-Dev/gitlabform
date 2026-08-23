@@ -52,3 +52,78 @@ class TestGroupMembersProcessor:
                 "member_role_id": None,
             }
         )
+
+
+class TestGroupMembersDryRunDiff:
+    def setup_method(self):
+        self.processor = GroupMembersProcessor.__new__(GroupMembersProcessor)
+        self.processor.gl = MagicMock()
+
+    @staticmethod
+    def _diff(current: dict, desired: dict) -> str:
+        from gitlabform.processors.util.difference_logger import DifferenceLogger
+
+        return DifferenceLogger.log_diff("group_members changes", current, desired, only_changed=True, test=True)
+
+    def _set_gitlab_state(self, members=None, shared_with_groups=None):
+        group = self.processor.gl.get_group_by_path_cached.return_value
+        group.members.list.return_value = members or []
+        group.shared_with_groups = shared_with_groups or []
+        return group
+
+    @staticmethod
+    def _mock_member(username="RaymondSmith", access_level=30, expires_at=None):
+        member = MagicMock(spec=["username", "access_level", "expires_at"])
+        member.username = username
+        member.access_level = access_level
+        member.expires_at = expires_at
+        return member
+
+    def test__differing_access_level_shows_in_diff(self):
+        self._set_gitlab_state(members=[self._mock_member(access_level=30)])
+
+        text = self._diff(
+            self.processor._get_current_state("some/group"),
+            self.processor._get_desired_state({"raymondsmith": {"access_level": 40}}),
+        )
+
+        assert "user:raymondsmith" in text
+        assert "40" in text
+
+    def test__matching_users_and_groups_are_silent(self):
+        self._set_gitlab_state(
+            members=[self._mock_member(access_level=30, expires_at="2026-12-31")],
+            shared_with_groups=[
+                {
+                    "group_id": 28,
+                    "group_name": "Fabio",
+                    "group_full_path": "fabio/fabio",
+                    "group_access_level": 50,
+                    "expires_at": None,
+                }
+            ],
+        )
+        config = {
+            "RaymondSmith": {"access_level": 30, "expires_at": "2026-12-31"},
+            "groups": {"fabio/fabio": {"group_access": 50}},
+        }
+
+        assert (
+            self._diff(
+                self.processor._get_current_state("some/group"),
+                self.processor._get_desired_state(config),
+            )
+            == ""
+        )
+
+    def test__desired_state_formats_date_expires_at(self):
+        desired = self.processor._get_desired_state(
+            {"users": {"alice": {"access_level": 30, "expires_at": date(2026, 6, 18)}}}
+        )
+
+        assert desired == {"user:alice": {"access_level": 30, "expires_at": "2026-06-18"}}
+
+    def test__enforce_and_keep_bots_are_not_treated_as_users(self):
+        desired = self.processor._get_desired_state({"enforce": True, "keep_bots": True, "bob": {"access_level": 50}})
+
+        assert desired == {"user:bob": {"access_level": 50, "expires_at": None}}

@@ -80,10 +80,11 @@ class RemoteMirrorsProcessor(AbstractProcessor):
         project: Project = self.gl.get_project_by_path_cached(project_and_group)
         current_state = {}
         for mirror in project.remote_mirrors.list(get_all=True):
-            normalized_url = self._normalize_url_for_comparison(mirror.url)
+            mirror_data = mirror.asdict()
+            normalized_url = self._normalize_url_for_comparison(mirror_data.get("url", ""))
             mirror_state = {
                 key: value
-                for key, value in sorted(mirror.asdict().items())
+                for key, value in sorted(mirror_data.items())
                 if key not in self.DIFF_IGNORED_KEYS and value is not None
             }
             mirror_state["url"] = normalized_url
