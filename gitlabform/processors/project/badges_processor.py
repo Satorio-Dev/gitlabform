@@ -4,6 +4,12 @@ from gitlabform.processors.multiple_entities_processor import MultipleEntitiesPr
 
 
 class BadgesProcessor(MultipleEntitiesProcessor):
+    diff_ignored_keys = MultipleEntitiesProcessor.diff_ignored_keys | {
+        "rendered_link_url",
+        "rendered_image_url",
+        "kind",
+    }
+
     def __init__(self, gitlab: GitLab):
         super().__init__(
             "badges",

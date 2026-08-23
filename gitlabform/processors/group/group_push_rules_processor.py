@@ -12,6 +12,15 @@ class GroupPushRulesProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("group_push_rules", gitlab)
 
+    def _get_current_state(self, group: str) -> Dict:
+        gitlab_group: Group = self.gl.get_group_by_path_cached(group)
+        try:
+            return gitlab_group.pushrules.get().asdict()
+        except GitlabGetError as e:
+            if e.response_code == 404:
+                return {}
+            raise
+
     def _process_configuration(self, group: str, configuration: Dict):
         configured_group_push_rules = configuration.get("group_push_rules", {})
 

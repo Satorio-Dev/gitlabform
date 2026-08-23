@@ -10,6 +10,20 @@ class ResourceGroupsProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("resource_groups", gitlab)
 
+    def _get_current_state(self, project_and_group: str) -> dict:
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+        return {
+            resource_group.key: self._comparable_resource_group(resource_group.asdict())
+            for resource_group in project.resource_groups.list(get_all=True)
+        }
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        return {name: config for name, config in entity_config.items() if name != "ensure_exists"}
+
+    @staticmethod
+    def _comparable_resource_group(resource_group: dict) -> dict:
+        return {k: v for k, v in resource_group.items() if k not in {"id", "key", "created_at", "updated_at"}}
+
     def _process_configuration(self, project_and_group: str, configuration: dict):
         configured_resource_groups: dict = configuration.get("resource_groups", {})
         ensure_exists: bool = configuration.get("resource_groups|ensure_exists", True)

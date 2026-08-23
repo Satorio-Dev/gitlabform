@@ -1,9 +1,12 @@
 from typing import Any, Dict
 from logging import info
-from gitlabform.gitlab import GitLab
+
+from gitlab.exceptions import GitlabGetError
 from gitlab.v4.objects import Group
 
+from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
+from gitlabform.processors.util.difference_logger import hide
 from gitlabform.processors.util.variables_processor import VariablesProcessor
 
 
@@ -24,3 +27,32 @@ class GroupVariablesProcessor(AbstractProcessor):
             configured_variables.pop("enforce")
 
         self._variables_processor.process_variables(group, configured_variables, enforce_mode)
+
+    def _get_current_state(self, project_and_group: str) -> Dict[str, Dict[str, Any]]:
+        try:
+            group: Group = self.gl.get_group_by_path_cached(project_and_group)
+            variables = self._variables_processor.get_variables_from_gitlab(group)
+        except GitlabGetError:
+            variables = []
+
+        return {self._variable_identity(v.asdict()): self._masked_variable(v.asdict()) for v in variables}
+
+    def _get_desired_state(self, entity_config: dict) -> Dict[str, Dict[str, Any]]:
+        return {
+            self._variable_identity(var): self._masked_variable(var)
+            for alias, var in entity_config.items()
+            if alias != "enforce" and isinstance(var, dict)
+        }
+
+    @staticmethod
+    def _variable_identity(var: Dict[str, Any]) -> str:
+        """Compose a stable diff key. GitLab allows the same variable key on multiple
+        environment scopes, so `key` alone is not unique; `key@scope` is."""
+        return f"{var.get('key')}@{var.get('environment_scope', '*')}"
+
+    @staticmethod
+    def _masked_variable(var: Dict[str, Any]) -> Dict[str, Any]:
+        masked = {k: var[k] for k in sorted(var) if k not in {"id", "_links"}}
+        if "value" in masked:
+            masked["value"] = hide(str(masked["value"]))
+        return masked

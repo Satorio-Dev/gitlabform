@@ -61,6 +61,51 @@ class RemoteMirrorsProcessor(AbstractProcessor):
         clean_netloc = parsed.netloc.split("@")[-1]
         return parsed._replace(netloc=clean_netloc).geturl()
 
+    DIFF_IGNORED_KEYS = frozenset(
+        {
+            "id",
+            "update_status",
+            "last_error",
+            "last_update_at",
+            "last_update_started_at",
+            "last_successful_update_at",
+        }
+    )
+
+    LOCAL_ONLY_KEYS = frozenset({"force_push", "force_update", "print_public_key"})
+
+    def _get_current_state(self, project_and_group: str) -> Dict[str, Any]:
+        """The project's mirrors, keyed by their url without credentials - the same
+        normalization _needs_update() makes before it compares."""
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+        current_state = {}
+        for mirror in project.remote_mirrors.list(get_all=True):
+            normalized_url = self._normalize_url_for_comparison(mirror.url)
+            mirror_state = {
+                key: value
+                for key, value in sorted(mirror.asdict().items())
+                if key not in self.DIFF_IGNORED_KEYS and value is not None
+            }
+            mirror_state["url"] = normalized_url
+            current_state[normalized_url] = dict(sorted(mirror_state.items()))
+        return current_state
+
+    def _get_desired_state(self, entity_config: dict) -> Dict[str, Any]:
+        desired_state = {}
+        for mirror_url, mirror_settings in entity_config.items():
+            if not isinstance(mirror_settings, dict):
+                continue
+            normalized_url = self._normalize_url_for_comparison(mirror_url)
+            desired_state[normalized_url] = dict(
+                sorted(
+                    {
+                        "url": normalized_url,
+                        **{key: value for key, value in mirror_settings.items() if key not in self.LOCAL_ONLY_KEYS},
+                    }.items()
+                )
+            )
+        return desired_state
+
     def _process_configuration(self, project_and_group: str, configuration: Dict[str, Any]) -> None:
         project: Project = self.gl.get_project_by_path_cached(project_and_group)
 

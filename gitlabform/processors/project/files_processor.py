@@ -18,11 +18,97 @@ from gitlabform.processors.project.branches_processor import BranchesProcessor
 
 
 class FilesProcessor(AbstractProcessor):
+    TEMPLATING_ENABLED_BY_DEFAULT = True
+
     def __init__(self, gitlab: GitLab, config: Configuration, strict: bool):
         super().__init__("files", gitlab)
         self.config = config
         self.strict = strict
         self.branch_processor = BranchesProcessor(gitlab, strict)
+        self._configuration_for_diff: dict | None = None
+        self._project_and_group_for_diff: str | None = None
+
+    def _section_is_in_config(self, configuration: dict):
+        """Keep the whole configuration for the diff hooks, which are handed this
+        section alone and cannot resolve branches or render templates without it."""
+        self._configuration_for_diff = configuration
+        return super()._section_is_in_config(configuration)
+
+    def _get_current_state(self, project_and_group: str) -> dict | None:
+        configuration = self._configuration_for_diff
+        if configuration is None:
+            return None
+        self._project_and_group_for_diff = project_and_group
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+
+        current: dict = {}
+        for file, branch_name in self._files_and_branches(project, configuration):
+            try:
+                repo_file: ProjectFile = project.files.get(file_path=file, ref=branch_name)
+                try:
+                    content = repo_file.decode().decode("utf-8")
+                except UnicodeDecodeError:
+                    content = "<binary or non-utf-8 content>"
+                current[f"{file} @ {branch_name}"] = {"exists": True, "content": content}
+            except GitlabGetError:
+                current[f"{file} @ {branch_name}"] = {"exists": False}
+        return current
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        configuration = self._configuration_for_diff
+        project_and_group = self._project_and_group_for_diff
+        if configuration is None or project_and_group is None:
+            return entity_config
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+
+        desired: dict = {}
+        desired_content_per_file: dict = {}
+        for file, branch_name in self._files_and_branches(project, configuration):
+            if configuration.get("files|" + file + "|delete"):
+                desired[f"{file} @ {branch_name}"] = {"exists": False}
+            else:
+                if file not in desired_content_per_file:
+                    desired_content_per_file[file] = self.get_desired_file_content(
+                        file, configuration, project_and_group
+                    )
+                desired[f"{file} @ {branch_name}"] = {
+                    "exists": True,
+                    "content": desired_content_per_file[file],
+                }
+        return desired
+
+    def _files_and_branches(self, project: Project, configuration: dict) -> list:
+        files_and_branches: list = []
+        for file in sorted(configuration["files"]):
+            if configuration.get("files|" + file + "|skip"):
+                continue
+
+            file_config = configuration["files"][file]
+            if "branches" not in file_config:
+                critical(
+                    f"File '{file}' is missing the required 'branches' key."
+                    f" Specify which branches to apply the file to using one of:"
+                    f" 'all', 'protected', or a list of branch names (e.g. ['main'])."
+                )
+                sys.exit(EXIT_INVALID_INPUT)
+
+            config_target_ref = file_config["branches"]
+            branches_to_update: list[ProjectBranch] = []
+
+            if config_target_ref == "all":
+                branches_to_update.extend(project.branches.list(get_all=True, lazy=True))
+            elif config_target_ref == "protected":
+                for protected_branch in project.protectedbranches.list(get_all=True, lazy=True):
+                    self.append_branches_matching_ref(branches_to_update, file, project, protected_branch.name)
+            elif isinstance(config_target_ref, list):
+                for ref in config_target_ref:
+                    self.append_branches_matching_ref(branches_to_update, file, project, ref)
+
+            for branch in branches_to_update:
+                files_and_branches.append((file, branch.name))
+                if configuration.get("files|" + file + "|only_first_branch", False):
+                    break
+        return files_and_branches
 
     def _can_proceed(self, project_or_group: str, configuration: dict):
         for file in sorted(configuration["files"]):
@@ -147,27 +233,7 @@ class FilesProcessor(AbstractProcessor):
         else:
             # change or create file
 
-            if configuration.get("files|" + file + "|content"):
-                new_content = configuration.get("files|" + file + "|content")
-            else:
-                path_in_config = Path(str(configuration.get("files|" + file + "|file")))
-                if path_in_config.is_absolute():
-                    effective_path = path_in_config
-                else:
-                    # relative paths are relative to config file location
-                    effective_path = Path(os.path.join(self.config.config_dir, str(path_in_config)))
-                new_content = effective_path.read_text()
-
-            # templating is documented to be enabled by default,
-            # see https://gitlabform.github.io/gitlabform/reference/files/#files
-            templating_enabled = True
-
-            if configuration.get("files|" + file + "|template", templating_enabled):
-                new_content = self.get_file_content_as_template(
-                    new_content,
-                    project_and_group,
-                    **configuration.get("files|" + file + "|jinja_env", dict()),
-                )
+            new_content = self.get_desired_file_content(file, configuration, project_and_group)
 
             try:
                 # Returns base64 encoded content: https://python-gitlab.readthedocs.io/en/stable/gl_objects/projects.html#project-files
@@ -212,6 +278,30 @@ class FilesProcessor(AbstractProcessor):
                     configuration,
                     new_content,
                 )
+
+    def get_desired_file_content(self, file: str, configuration: dict, project_and_group: str) -> str:
+        if configuration.get("files|" + file + "|content") and configuration.get("files|" + file + "|file"):
+            critical(f"File '{file}' has both `content` and `file` set - use only one of these keys.")
+            sys.exit(EXIT_INVALID_INPUT)
+
+        if configuration.get("files|" + file + "|content"):
+            new_content = str(configuration.get("files|" + file + "|content"))
+        else:
+            path_in_config = Path(str(configuration.get("files|" + file + "|file")))
+            if path_in_config.is_absolute():
+                effective_path = path_in_config
+            else:
+                effective_path = Path(os.path.join(self.config.config_dir, str(path_in_config)))
+            new_content = effective_path.read_text()
+
+        if configuration.get("files|" + file + "|template", self.TEMPLATING_ENABLED_BY_DEFAULT):
+            new_content = self.get_file_content_as_template(
+                new_content,
+                project_and_group,
+                **configuration.get("files|" + file + "|jinja_env", dict()),
+            )
+
+        return new_content
 
     def modify_file_dealing_with_branch_protection(
         self,

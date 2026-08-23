@@ -40,6 +40,16 @@ class AbstractKey(ABC):
         """
         pass
 
+    @abstractmethod
+    def identity(self, entity) -> str:
+        """
+        :param entity: some entity
+        :return: a stable string built from this key's value(s) in the entity,
+                 usable as a dict key to line up entities from the configuration
+                 with entities from GitLab (f.e. for the dry-run diff).
+        """
+        pass
+
 
 class Key(AbstractKey):
     """
@@ -57,6 +67,9 @@ class Key(AbstractKey):
 
     def explain(self) -> str:
         return f"'{self.name}'"
+
+    def identity(self, entity) -> str:
+        return str(entity.get(self.name))
 
 
 class And(AbstractKey):
@@ -77,6 +90,9 @@ class And(AbstractKey):
         explains = [key.explain() for key in self.keys]
         return f"({' and '.join(explains)})"
 
+    def identity(self, entity) -> str:
+        return "/".join(key.identity(entity) for key in self.keys)
+
 
 class Or(AbstractKey):
     """
@@ -95,6 +111,12 @@ class Or(AbstractKey):
     def explain(self) -> str:
         explains = [key.explain() for key in self.keys]
         return f"({' or '.join(explains)})"
+
+    def identity(self, entity) -> str:
+        for key in self.keys:
+            if key.contains(entity):
+                return key.identity(entity)
+        return "None"
 
 
 class Xor(AbstractKey):
@@ -129,6 +151,12 @@ class Xor(AbstractKey):
         explains = [key.explain() for key in self.keys]
         return f"(exactly one of: {', '.join(explains)})"
 
+    def identity(self, entity) -> str:
+        for key in self.keys:
+            if key.contains(entity):
+                return key.identity(entity)
+        return "None"
+
 
 class OptionalKey(AbstractKey):
     """
@@ -150,3 +178,6 @@ class OptionalKey(AbstractKey):
 
     def explain(self) -> str:
         return f"(optionally '{self.name}')"
+
+    def identity(self, entity) -> str:
+        return str(entity.get(self.name))

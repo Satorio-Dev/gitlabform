@@ -52,6 +52,24 @@ class MultipleEntitiesProcessor(AbstractProcessor, metaclass=abc.ABCMeta):
         else:
             self.edit_method = None
 
+    diff_ignored_keys: frozenset = frozenset({"id", "_links"})
+
+    def _get_current_state(self, project_or_group: str) -> dict:
+        current_state = {}
+        for entity in self.list_method(project_or_group):
+            if hasattr(entity, "asdict"):
+                entity = entity.asdict()
+            entity = {k: v for k, v in sorted(entity.items()) if k not in self.diff_ignored_keys and v is not None}
+            current_state[self.defining.identity(entity)] = entity
+        return current_state
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        return {
+            self.defining.identity(entity): dict(sorted(entity.items()))
+            for alias, entity in entity_config.items()
+            if alias != "enforce" and isinstance(entity, dict)
+        }
+
     def _process_configuration(self, project_or_group: str, configuration: dict):
         entities_in_configuration = configuration[self.configuration_name]
         if "enforce" in entities_in_configuration:

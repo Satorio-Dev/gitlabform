@@ -11,6 +11,35 @@ class JobTokenScopeProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("job_token_scope", gitlab)
 
+    def _get_current_state(self, project_and_group: str) -> dict:
+        project = self.gl.get_project_by_path_cached(project_and_group)
+        job_token_scope = project.job_token_scope.get()
+
+        allowed_project_ids = sorted(
+            allowed.get_id()
+            for allowed in job_token_scope.allowlist.list(get_all=True)
+            if allowed.get_id() != project.id
+        )
+        allowed_group_ids = sorted(allowed.get_id() for allowed in job_token_scope.groups_allowlist.list(get_all=True))
+
+        return {
+            "limit_access_to_this_project": job_token_scope.inbound_enabled,
+            "allowlist": {
+                "projects": allowed_project_ids,
+                "groups": allowed_group_ids,
+            },
+        }
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        allowlist_config = entity_config.get("allowlist", {})
+        return {
+            "limit_access_to_this_project": entity_config.get("limit_access_to_this_project", True),
+            "allowlist": {
+                "projects": sorted(self._get_target_project_ids_from_config(allowlist_config.get("projects", []))),
+                "groups": sorted(self._get_target_group_ids_from_config(allowlist_config.get("groups", []))),
+            },
+        }
+
     def _process_configuration(self, project_and_group: str, configuration: dict):
         job_token_config = configuration.get("job_token_scope", {})
         debug(f"Job Token Scope config: {job_token_config}")

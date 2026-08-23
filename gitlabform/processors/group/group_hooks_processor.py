@@ -1,5 +1,5 @@
 from logging import debug, warning
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from gitlab.base import RESTObject, RESTObjectList
 from gitlab.v4.objects import Group
@@ -7,6 +7,7 @@ from gitlab.v4.objects import GroupHook
 
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
+from gitlabform.processors.util.difference_logger import hide
 
 
 class GroupHooksProcessor(AbstractProcessor):
@@ -23,6 +24,46 @@ class GroupHooksProcessor(AbstractProcessor):
             return False
 
         return True
+
+    DIFF_IGNORED_KEYS = frozenset({"id", "group_id", "created_at"})
+
+    def _get_current_state(self, group_path_and_name: str) -> Optional[dict]:
+        if not self.gitlab.enterprise:
+            return None
+
+        group: Group = self.gl.get_group_by_path_cached(group_path_and_name)
+        current_state = {}
+        for hook in group.hooks.list(get_all=True):
+            hook_state = {
+                key: value
+                for key, value in sorted(hook.asdict().items())
+                if key not in self.DIFF_IGNORED_KEYS and value is not None
+            }
+            current_state[hook_state["url"]] = hook_state
+        return current_state
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        """The configured hooks, keyed by url, with the token and the url_variables
+        masked: GET does not return them, so they can never be compared, and their
+        values must not reach the log."""
+        desired_state: dict = {}
+        for url, hook_config in entity_config.items():
+            if url == "enforce" or not isinstance(hook_config, dict):
+                continue
+            desired_hook = {"url": url, **hook_config}
+            if "token" in desired_hook:
+                desired_hook["token"] = hide(str(desired_hook["token"]))
+            if isinstance(desired_hook.get("url_variables"), list):
+                desired_hook["url_variables"] = [
+                    (
+                        {**url_variable, "value": hide(str(url_variable["value"]))}
+                        if isinstance(url_variable, dict) and "value" in url_variable
+                        else url_variable
+                    )
+                    for url_variable in desired_hook["url_variables"]
+                ]
+            desired_state[url] = dict(sorted(desired_hook.items()))
+        return desired_state
 
     def _process_configuration(self, group_path_and_name: str, configuration: dict):
         hooks_in_config: tuple[str, ...] = tuple(x for x in sorted(configuration["group_hooks"]) if x != "enforce")

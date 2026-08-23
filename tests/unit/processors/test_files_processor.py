@@ -4,6 +4,7 @@ import pytest
 from gitlab import GitlabGetError, GitlabListError
 
 from gitlabform.processors.project.files_processor import FilesProcessor
+from gitlabform.processors.util.difference_logger import DifferenceLogger
 
 
 def _make_branch(name: str, branch_id: str = "abc123"):
@@ -325,3 +326,57 @@ class TestProcessBranch:
         self.processor.process_branch(self.branch, cfg, "README.md", self.project, "g/p")
 
         self.processor.get_file_content_as_template.assert_called_once()
+
+
+class TestFilesDiff:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        self.config = MagicMock()
+        self.processor = FilesProcessor(self.gitlab, self.config, strict=False)
+        self.processor.gl = MagicMock()
+        self.project = MagicMock()
+        self.processor.gl.get_project_by_path_cached.return_value = self.project
+        self.project.branches.get.return_value = _make_branch("main")
+
+        self.configuration = _ConfigDict(
+            {"files": {"README.md": {"branches": ["main"], "content": "# Title\n", "overwrite": True}}}
+        )
+        self.processor._section_is_in_config(self.configuration)
+
+    def _repo_file(self, content: bytes):
+        repo_file = MagicMock()
+        repo_file.decode.return_value = content
+        return repo_file
+
+    def test_state_differs_diff_says_so(self):
+        self.project.files.get.return_value = self._repo_file(b"# Old title\n")
+
+        current = self.processor._get_current_state("g/p")
+        desired = self.processor._get_desired_state(self.configuration["files"])
+
+        text = DifferenceLogger.log_diff("files changes", current, desired, only_changed=True, test=True)
+        assert "README.md @ main" in text
+        assert "# Old title" in text and "# Title" in text
+
+    def test_state_matches_diff_is_silent(self):
+        self.project.files.get.return_value = self._repo_file(b"# Title\n")
+
+        current = self.processor._get_current_state("g/p")
+        desired = self.processor._get_desired_state(self.configuration["files"])
+
+        assert DifferenceLogger.log_diff("files changes", current, desired, only_changed=True, test=True) == ""
+
+    def test_missing_file_is_an_explicit_absence_not_a_silent_match(self):
+        self.project.files.get.side_effect = GitlabGetError("404 File Not Found", response_code=404)
+
+        current = self.processor._get_current_state("g/p")
+        desired = self.processor._get_desired_state(self.configuration["files"])
+
+        assert current == {"README.md @ main": {"exists": False}}
+        text = DifferenceLogger.log_diff("files changes", current, desired, only_changed=True, test=True)
+        assert "README.md @ main" in text
+
+    def test_without_stashed_configuration_the_section_opts_out(self):
+        self.processor._configuration_for_diff = None
+
+        assert self.processor._get_current_state("g/p") is None

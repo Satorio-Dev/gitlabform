@@ -6,8 +6,25 @@ from gitlab.v4.objects import Project
 
 
 class ProjectProcessor(AbstractProcessor):
+    TRANSFER_SOURCE_NOT_AVAILABLE = "<not available: GitLab API does not report the transfer source>"
+
     def __init__(self, gitlab: GitLab):
         super().__init__("project", gitlab)
+
+    def _get_current_state(self, project_and_group: str) -> dict:
+        try:
+            project: Project = self.gl.get_project_by_path_cached(project_and_group)
+        except GitlabGetError:
+            return {}
+        return {
+            "archive": project.archived,
+            "transfer_from": self.TRANSFER_SOURCE_NOT_AVAILABLE,
+        }
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        """Only the keys with a current state to diff against: this section configures
+        actions rather than state, and GitLab keeps no record of a transfer source."""
+        return {key: value for key, value in entity_config.items() if key in ("archive", "transfer_from")}
 
     def _process_configuration(self, project_and_group: str, configuration: dict):
         project_path_with_namespace: str = project_and_group

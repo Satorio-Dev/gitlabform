@@ -13,6 +13,52 @@ class MembersProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("members", gitlab)
 
+    def _get_current_state(self, project_and_group: str) -> dict:
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+
+        users = {}
+        current_members = self._get_members_from_project(project)
+        for username in sorted(current_members):
+            member = current_members[username]
+            users[username] = {
+                "access_level": member.access_level,
+                "expires_at": member.expires_at,
+                "member_role_id": (member.member_role["id"] if hasattr(member, "member_role") else None),
+            }
+
+        groups = {}
+        current_groups = self.gitlab.get_groups_from_project(project_and_group)
+        for group_name in sorted(current_groups, key=str.lower):
+            shared_group = current_groups[group_name]
+            groups[group_name.lower()] = {
+                "group_access": shared_group["group_access_level"],
+                "expires_at": shared_group["expires_at"],
+            }
+
+        return {"users": users, "groups": groups}
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        users = {}
+        configured_users = entity_config.get("users", {})
+        for username in sorted(configured_users, key=str.lower):
+            user_config = configured_users[username]
+            users[username.lower()] = {
+                "access_level": user_config.get("access_level"),
+                "expires_at": format_expires_at(user_config.get("expires_at")),
+                "member_role_id": user_config.get("member_role"),
+            }
+
+        groups = {}
+        configured_groups = entity_config.get("groups", {})
+        for group_name in sorted(configured_groups, key=str.lower):
+            group_config = configured_groups[group_name]
+            groups[group_name.lower()] = {
+                "group_access": group_config.get("group_access"),
+                "expires_at": format_expires_at(group_config.get("expires_at")),
+            }
+
+        return {"users": users, "groups": groups}
+
     def _process_configuration(self, project_and_group: str, configuration: dict):
         keep_bots = configuration.get("members|keep_bots", False)
 
