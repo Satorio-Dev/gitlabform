@@ -13,6 +13,8 @@ def hide(text: str):
 
 REMOVED_BY_ENFORCE = "(will be removed by enforce)"
 ONLY_IN_GITLAB = "(only in GitLab)"
+TO_BE_DELETED = "(will be deleted)"
+NOTHING_TO_DELETE = "(not in GitLab - nothing to delete)"
 
 
 class DifferenceLogger:

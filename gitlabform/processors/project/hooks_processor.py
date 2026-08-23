@@ -31,7 +31,7 @@ class HooksProcessor(AbstractProcessor):
             current_state[hook_state["url"]] = hook_state
         return current_state
 
-    TO_BE_DELETED = "(will be deleted)"
+    diff_honours_delete_flag = True
 
     def _get_desired_state(self, entity_config: dict) -> dict:
         """The configured hooks, keyed by url, with the token and the url_variables
@@ -41,10 +41,6 @@ class HooksProcessor(AbstractProcessor):
         for url, hook_config in entity_config.items():
             if url == "enforce" or not isinstance(hook_config, dict):
                 continue
-            if hook_config.get("delete"):
-                desired_state[url] = self.TO_BE_DELETED
-                continue
-
             desired_hook = {"url": url, **hook_config}
             if "token" in desired_hook:
                 desired_hook["token"] = hide(str(desired_hook["token"]))

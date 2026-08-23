@@ -85,7 +85,7 @@ class TestMembersDiffKeepBots:
 
     @staticmethod
     def _current_users_in_diff(processor: MembersProcessor, config: dict) -> dict:
-        with patch("gitlabform.processors.project.members_processor.DifferenceLogger") as logger:
+        with patch("gitlabform.processors.abstract_processor.DifferenceLogger") as logger:
             processor._print_diff("foo/bar", config, diff_only_changed=True)
         return logger.log_diff.call_args[0][1]["users"]
 

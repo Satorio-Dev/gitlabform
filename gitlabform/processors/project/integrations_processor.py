@@ -15,6 +15,7 @@ class IntegrationsProcessor(AbstractProcessor):
         super().__init__("integrations", gitlab)
 
     diff_keys_are_entities = True
+    diff_honours_delete_flag = True
 
     def _get_current_state(self, project_and_group: str) -> dict:
         """The active integrations, keyed by slug, with the password-type properties

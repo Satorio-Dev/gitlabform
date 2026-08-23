@@ -6,7 +6,6 @@ from logging import info, critical, error
 from gitlabform.constants import EXIT_INVALID_INPUT
 from gitlabform.gitlab import GitLab, AccessLevel
 from gitlabform.processors.abstract_processor import AbstractProcessor
-from gitlabform.processors.util.difference_logger import DifferenceLogger
 from gitlabform.util import format_expires_at
 from gitlab.v4.objects import Group, GroupMember, User
 from gitlab import GitlabDeleteError, GitlabError, GitlabGetError
@@ -304,39 +303,20 @@ class GroupMembersProcessor(AbstractProcessor):
 
         return current
 
-    def _print_diff(self, project_or_project_and_group: str, entity_config, diff_only_changed: bool) -> None:
-        """Overridden so the diff obeys "keep_bots" the same way _process_users() does.
+    def _reconcile_with_apply(
+        self, project_or_project_and_group: str, current: dict, desired: dict, entity_config
+    ) -> dict:
+        """Make the diff obey "keep_bots" the same way _process_users() does.
 
-        With keep_bots on, a bot the config does not mention is never removed by this
-        section: _process_users() skips exactly those before deleting, and without
-        "enforce" nothing is deleted at all. Left in the current state it is printed as
-        "(will be removed by enforce)" - a removal that will never happen - or as "(only
-        in GitLab)" for a member the directive says is not the config's business.
-        _get_current_state() is handed only a group path and cannot see the directive, so
-        the two sides are reconciled here, once both are built.
-
-        This is the group half of the same guard MembersProcessor._print_diff() carries
-        for projects; the directive is spelled the same in both sections and the two
-        halves must not read it differently. Shared groups are untouched: "keep_bots" is
-        about users, and _process_groups() knows nothing of it.
+        A bot the config does not mention is never removed under that directive, so it
+        is dropped from the reported state instead of being announced as leaving.
+        Shared groups are untouched: "keep_bots" is about users only.
         """
-        current = self._get_current_state(project_or_project_and_group)
-        desired = self._get_desired_state(entity_config)
-
         if isinstance(entity_config, dict) and entity_config.get("keep_bots", False):
-            current = {
-                identity: state
-                for identity, state in current.items()
-                if identity in desired or not self._identifies_a_bot(identity)
-            }
-
-        DifferenceLogger.log_diff(
-            f"{self.configuration_name} changes",
-            current,
-            desired,
-            only_changed=diff_only_changed,
-            removed_marker=self._diff_removed_marker(entity_config),
-        )
+            for identity in list(current):
+                if identity not in desired and self._identifies_a_bot(identity):
+                    del current[identity]
+        return desired
 
     USER_IDENTITY_PREFIX = "user:"
 

@@ -75,6 +75,7 @@ class RemoteMirrorsProcessor(AbstractProcessor):
     LOCAL_ONLY_KEYS = frozenset({"force_push", "force_update", "print_public_key"})
 
     diff_keys_are_entities = True
+    diff_honours_delete_flag = True
 
     def _get_current_state(self, project_and_group: str) -> Dict[str, Any]:
         """The project's mirrors, keyed by their url without credentials - the same

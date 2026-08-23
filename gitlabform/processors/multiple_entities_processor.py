@@ -56,6 +56,8 @@ class MultipleEntitiesProcessor(AbstractProcessor, metaclass=abc.ABCMeta):
 
     diff_keys_are_entities = True
     diff_ignores_undeclared_keys = True
+    diff_honours_delete_flag = True
+    diff_delete_of_absent_entity_is_noop = False
 
     def _get_current_state(self, project_or_group: str) -> dict:
         current_state = {}

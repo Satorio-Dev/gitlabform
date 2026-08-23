@@ -17,6 +17,7 @@ class SchedulesProcessor(AbstractProcessor):
         super().__init__("schedules", gitlab)
 
     diff_keys_are_entities = True
+    diff_honours_delete_flag = True
 
     def _get_current_state(self, project_and_group: str) -> Dict:
         """Pipeline schedules, keyed by description, for the centralized dry-run diff.

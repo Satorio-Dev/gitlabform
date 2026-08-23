@@ -11,8 +11,10 @@ from gitlabform.output import EffectiveConfigurationFile
 from gitlabform.processors.util.decorators import configuration_to_safe_dict
 from gitlabform.processors.util.difference_logger import (
     DifferenceLogger,
+    NOTHING_TO_DELETE,
     ONLY_IN_GITLAB,
     REMOVED_BY_ENFORCE,
+    TO_BE_DELETED,
 )
 
 
@@ -131,6 +133,8 @@ class AbstractProcessor(ABC):
 
     diff_keys_are_entities: bool = False
     diff_ignores_undeclared_keys: bool = False
+    diff_honours_delete_flag: bool = False
+    diff_delete_of_absent_entity_is_noop: bool = True
 
     @staticmethod
     def _keep_only_declared_keys(current: dict, desired: dict) -> dict:
@@ -154,6 +158,37 @@ class AbstractProcessor(ABC):
         enforce = isinstance(entity_config, dict) and bool(entity_config.get("enforce", False))
         return REMOVED_BY_ENFORCE if enforce else ONLY_IN_GITLAB
 
+    def _diff_delete_marker(self, identity: str, wanted: dict, current: dict) -> Optional[str]:
+        """What to show instead of the wanted state of an entity the config marks
+        "delete: true", or None to leave that entry as it is. Override where the apply
+        path has more to say than "removed it" or "it was not there".
+        """
+        if identity in current:
+            return TO_BE_DELETED
+        return NOTHING_TO_DELETE if self.diff_delete_of_absent_entity_is_noop else None
+
+    def _mark_entities_to_be_deleted(self, current: dict, desired: dict) -> dict:
+        marked = {}
+        for identity, wanted in desired.items():
+            marker = (
+                self._diff_delete_marker(identity, wanted, current)
+                if isinstance(wanted, dict) and wanted.get("delete")
+                else None
+            )
+            marked[identity] = wanted if marker is None else marker
+        return marked
+
+    def _reconcile_with_apply(
+        self, project_or_project_and_group: str, current: dict, desired: dict, entity_config
+    ) -> dict:
+        """Last word on the config side of the diff, with both sides in hand.
+
+        Override wherever the apply path skips an entity for a reason only that path can
+        see - a directive elsewhere in the config, or a state of GitLab that
+        _get_desired_state() is never handed. The default changes nothing.
+        """
+        return desired
+
     def _get_current_state(self, project_or_project_and_group: str) -> Optional[dict]:
         """Fetch the current state from GitLab for the centralized dry-run diff.
 
@@ -175,6 +210,9 @@ class AbstractProcessor(ABC):
             return
 
         desired = self._get_desired_state(entity_config)
+        if self.diff_honours_delete_flag:
+            desired = self._mark_entities_to_be_deleted(current, desired)
+        desired = self._reconcile_with_apply(project_or_project_and_group, current, desired, entity_config)
         if self.diff_ignores_undeclared_keys:
             current = self._keep_only_declared_keys(current, desired)
 

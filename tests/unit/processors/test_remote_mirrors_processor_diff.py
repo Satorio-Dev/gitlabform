@@ -87,3 +87,29 @@ class TestRemoteMirrorsDiff:
         )
 
         assert diff == ""
+
+
+def _print_diff(processor, entity_config: dict, caplog) -> str:
+    """Goes through _print_diff(), unlike _render_diff() above: what the config marks
+    for deletion is reconciled against GitLab there, with both sides in hand."""
+    with caplog.at_level("INFO"):
+        processor._print_diff("group/project", entity_config, diff_only_changed=True)
+    return "\n".join(r.message for r in caplog.records if "remote_mirrors changes" in r.message)
+
+
+class TestRemoteMirrorsDeleteFlag:
+    def test_a_mirror_marked_for_deletion_reads_as_a_deletion(self, caplog) -> None:
+        processor = _make_processor(MIRROR_IN_GITLAB)
+
+        diff = _print_diff(processor, {MIRROR_URL_IN_CONFIG: {"delete": True}}, caplog)
+
+        assert "(will be deleted)" in diff
+
+    def test_a_mirror_gitlab_has_not_got_is_not_promised_a_deletion(self, caplog) -> None:
+        processor = _make_processor(MIRROR_IN_GITLAB)
+
+        diff = _print_diff(processor, {"https://gitlab.com/other/repo.git": {"delete": True}}, caplog)
+
+        assert "https://gitlab.com/other/repo.git" in diff
+        assert "(not in GitLab - nothing to delete)" in diff
+        assert "(will be deleted)" not in diff

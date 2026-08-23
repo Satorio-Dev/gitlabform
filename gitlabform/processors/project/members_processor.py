@@ -6,7 +6,6 @@ from gitlab.v4.objects import Project, User
 from gitlabform.constants import EXIT_INVALID_INPUT
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
-from gitlabform.processors.util.difference_logger import DifferenceLogger
 from gitlabform.util import format_expires_at
 
 
@@ -60,31 +59,21 @@ class MembersProcessor(AbstractProcessor):
 
         return {"users": users, "groups": groups}
 
-    def _print_diff(self, project_or_project_and_group: str, entity_config, diff_only_changed: bool) -> None:
-        """Overridden so the diff obeys "keep_bots" the same way _process_users() does.
+    def _reconcile_with_apply(
+        self, project_or_project_and_group: str, current: dict, desired: dict, entity_config
+    ) -> dict:
+        """Make the diff obey "keep_bots" the same way _process_users() does.
 
-        A bot that GitLab reports but the config does not mention is not going anywhere
-        when keep_bots is on - _process_users() skips exactly those. Left in the current
-        state it reads as a member about to be removed, which is a removal that will
-        never happen. _get_current_state() is handed only a path and cannot see the
-        directive, so the two sides are reconciled here, once both are built.
+        A bot the config does not mention is never removed under that directive, so it
+        is dropped from the reported state instead of being announced as leaving.
         """
-        current = self._get_current_state(project_or_project_and_group)
-        desired = self._get_desired_state(entity_config)
-
         if entity_config.get("keep_bots", False):
             current["users"] = {
                 username: member
                 for username, member in current["users"].items()
                 if username in desired["users"] or not self._is_bot(username)
             }
-
-        DifferenceLogger.log_diff(
-            f"{self.configuration_name} changes",
-            current,
-            desired,
-            only_changed=diff_only_changed,
-        )
+        return desired
 
     def _is_bot(self, username: str) -> bool:
         user: User | None = self.gl.get_user_by_username_cached(username)

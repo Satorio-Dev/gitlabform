@@ -202,7 +202,7 @@ class TestGroupMembersDiffKeepBots:
         )
 
     def _current_side_of_diff(self, config: dict) -> dict:
-        with patch("gitlabform.processors.group.group_members_processor.DifferenceLogger") as logger:
+        with patch("gitlabform.processors.abstract_processor.DifferenceLogger") as logger:
             self.processor._print_diff("some/group", config, diff_only_changed=True)
         return logger.log_diff.call_args[0][1]
 

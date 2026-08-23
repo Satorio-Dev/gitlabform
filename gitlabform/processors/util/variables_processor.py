@@ -5,6 +5,8 @@ from gitlab.v4.objects import Group, Project, GroupVariable, ProjectVariable
 
 
 class VariablesProcessor:
+    DELETE_OF_ABSENT_VARIABLE = "(not in GitLab - deleting it will fail this section)"
+
     def __init__(self, needs_update: Callable):
         self.needs_update: Callable = needs_update
 

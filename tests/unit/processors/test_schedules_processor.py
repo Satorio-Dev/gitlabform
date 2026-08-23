@@ -85,8 +85,21 @@ class TestSchedulesDiff:
         assert isinstance(current["Test schedule pipeline"], list)
         assert len(current["Test schedule pipeline"]) == 2
 
-    def test_schedule_marked_for_delete_diffs_against_current(self):
-        config = {"Test schedule pipeline": {"delete": True}}
-        diff = self._diff([_gitlab_schedule()], config)
+    def _print_diff(self, gitlab_schedules, configured_schedules, caplog) -> str:
+        self._set_gitlab_schedules(gitlab_schedules)
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("group/project", configured_schedules, diff_only_changed=True)
+        return "\n".join(r.message for r in caplog.records if "schedules changes" in r.message)
+
+    def test_schedule_marked_for_delete_reads_as_a_deletion(self, caplog):
+        diff = self._print_diff([_gitlab_schedule()], {"Test schedule pipeline": {"delete": True}}, caplog)
+
         assert "Test schedule pipeline" in diff
-        assert '"delete": true' in diff
+        assert "(will be deleted)" in diff
+
+    def test_schedule_marked_for_delete_that_does_not_exist_is_not_promised_a_deletion(self, caplog):
+        diff = self._print_diff([_gitlab_schedule()], {"Other schedule": {"delete": True}}, caplog)
+
+        assert "Other schedule" in diff
+        assert "(not in GitLab - nothing to delete)" in diff
+        assert "(will be deleted)" not in diff

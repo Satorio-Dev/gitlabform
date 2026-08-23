@@ -6,7 +6,7 @@ from gitlab.v4.objects import Group
 
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
-from gitlabform.processors.util.difference_logger import hide
+from gitlabform.processors.util.difference_logger import hide, TO_BE_DELETED
 from gitlabform.processors.util.variables_processor import VariablesProcessor
 
 
@@ -29,6 +29,13 @@ class GroupVariablesProcessor(AbstractProcessor):
         self._variables_processor.process_variables(group, configured_variables, enforce_mode)
 
     diff_keys_are_entities = True
+    diff_honours_delete_flag = True
+    diff_delete_of_absent_entity_is_noop = False
+
+    def _diff_delete_marker(self, identity: str, wanted: dict, current: dict) -> str:
+        if identity in current:
+            return TO_BE_DELETED
+        return VariablesProcessor.DELETE_OF_ABSENT_VARIABLE
 
     def _get_current_state(self, project_and_group: str) -> Dict[str, Dict[str, Any]]:
         try:

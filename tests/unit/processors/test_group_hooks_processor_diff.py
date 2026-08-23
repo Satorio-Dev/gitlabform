@@ -110,3 +110,12 @@ class TestGroupHooksDiffThroughPrintDiff:
         diff = self._diff(processor, {"http://example.com/hook": {"delete": True}}, caplog)
 
         assert "(will be deleted)" in diff
+
+    def test__hook_marked_for_deletion_that_does_not_exist_is_named_but_not_promised(self, caplog) -> None:
+        processor = _make_processor([])
+
+        diff = self._diff(processor, {"http://example.com/hook": {"delete": True}}, caplog)
+
+        assert "http://example.com/hook" in diff
+        assert "(not in GitLab - nothing to delete)" in diff
+        assert "(will be deleted)" not in diff

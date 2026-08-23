@@ -110,3 +110,30 @@ class TestIntegrationsDiff:
         current = processor._get_current_state("group/project")
 
         assert set(current.keys()) == {"slack"}
+
+
+def _print_diff(processor, entity_config: dict, caplog) -> str:
+    """Goes through _print_diff(), unlike _render_diff() above: what the config marks
+    for deletion is reconciled against GitLab there, with both sides in hand."""
+    with caplog.at_level("INFO"):
+        processor._print_diff("group/project", entity_config, diff_only_changed=True)
+    return "\n".join(r.message for r in caplog.records if "integrations changes" in r.message)
+
+
+class TestIntegrationsDeleteFlag:
+    def test_an_integration_marked_for_deletion_reads_as_a_deletion(self, caplog) -> None:
+        processor = _make_processor(SLACK_INTEGRATION_IN_GITLAB)
+
+        diff = _print_diff(processor, {"slack": {"delete": True}}, caplog)
+
+        assert "slack" in diff
+        assert "(will be deleted)" in diff
+
+    def test_an_integration_gitlab_has_not_got_is_not_promised_a_deletion(self, caplog) -> None:
+        processor = _make_processor(SLACK_INTEGRATION_IN_GITLAB)
+
+        diff = _print_diff(processor, {"jira": {"delete": True}}, caplog)
+
+        assert "jira" in diff
+        assert "(not in GitLab - nothing to delete)" in diff
+        assert "(will be deleted)" not in diff
