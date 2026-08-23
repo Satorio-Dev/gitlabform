@@ -9,6 +9,7 @@ nav:
   - 💾 Installation: installation.md
   - 📋 Configuration:
       - reference/index.md
+      - Access tokens: reference/access_tokens.md
       - Archive/unarchive: reference/archive_unarchive.md
       - Avatar: reference/avatar.md
       - Badges: reference/badges.md
