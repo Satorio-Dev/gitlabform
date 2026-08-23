@@ -44,6 +44,7 @@ def configure_ruamel_yaml_loader(typ=None, pure=False, output=None, plug_ins=Non
     """
     yaml_loader = YAML(typ=typ, pure=pure, output=output, plug_ins=plug_ins)
     yaml_loader.indent(mapping=3, sequence=2, offset=0)
+    yaml_loader.width = 1000000
     yaml_loader.allow_duplicate_keys = True
     yaml_loader.explicit_start = False
     # show null
