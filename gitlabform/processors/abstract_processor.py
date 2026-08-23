@@ -46,12 +46,13 @@ class AbstractProcessor(ABC):
                     project_transfer_source = configuration["project"]["transfer_from"]
                     info(f"""Project {project_or_project_and_group} is configured to be transferred, 
                         diffing config from transfer source project {project_transfer_source}.""")
-                except KeyError:
+                except (KeyError, TypeError):
                     pass
 
+                declared = configuration.get(self.configuration_name)
                 self._print_diff(
                     project_transfer_source or project_or_project_and_group,
-                    configuration.get(self.configuration_name),
+                    {} if declared is None else declared,
                     diff_only_changed=diff_only_changed,
                 )
             else:

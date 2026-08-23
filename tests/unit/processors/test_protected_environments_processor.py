@@ -70,3 +70,20 @@ class TestProtectedEnvironmentsProcessorDryRunDiff:
             )
             == ""
         )
+
+    def test__empty_section_is_an_empty_diff_not_a_crash(self, caplog):
+        self.gitlab.list_protected_environments.return_value = [self._gitlab_environment()]
+
+        with caplog.at_level("INFO"):
+            self.processor.process(
+                "foo/bar",
+                {"protected_environments": None},
+                True,
+                True,
+                MagicMock(),
+            )
+
+        assert not [r for r in caplog.records if "protected_environments changes" in r.message]
+
+    def test__empty_section_never_reaches_get_desired_state_as_none(self):
+        assert self.processor._get_desired_state({}) == {}

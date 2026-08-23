@@ -82,6 +82,55 @@ class TestPrintDiff:
         )
 
 
+class TestEmptySectionInDryRun:
+    def test_empty_section_reaches_the_diff_as_an_empty_config(self) -> None:
+        seen: list = []
+
+        class RecordingProcessor(_TestableProcessor):
+            def _get_current_state(self, project_or_project_and_group):
+                return {"foo": "from-gitlab"}
+
+            def _get_desired_state(self, entity_config):
+                seen.append(entity_config)
+                return {k: v for k, v in entity_config.items()}
+
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            processor = RecordingProcessor("test_section", MagicMock(GitLab))
+
+        processor.process("group/project", {"test_section": None}, True, True, MagicMock())
+
+        assert seen == [{}]
+
+    def test_empty_section_produces_no_diff_output(self, caplog) -> None:
+        class CurrentOnlyProcessor(_TestableProcessor):
+            def _get_current_state(self, project_or_project_and_group):
+                return {"foo": "from-gitlab"}
+
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            processor = CurrentOnlyProcessor("test_section", MagicMock(GitLab))
+
+        with caplog.at_level("INFO"):
+            processor.process("group/project", {"test_section": None}, True, True, MagicMock())
+
+        assert not [r for r in caplog.records if "test_section changes" in r.message]
+
+    def test_empty_project_section_does_not_break_other_sections(self) -> None:
+        class CurrentOnlyProcessor(_TestableProcessor):
+            def _get_current_state(self, project_or_project_and_group):
+                return {"foo": "from-gitlab"}
+
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            processor = CurrentOnlyProcessor("test_section", MagicMock(GitLab))
+
+        processor.process(
+            "group/project",
+            {"project": None, "test_section": {"foo": "from-config"}},
+            True,
+            True,
+            MagicMock(),
+        )
+
+
 class TestRecursiveDiffAnalyzer:
     _cfg_a = [
         {

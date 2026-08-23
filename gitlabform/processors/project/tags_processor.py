@@ -63,6 +63,11 @@ class TagsProcessor(AbstractProcessor):
         cannot express that one and the apply path never sends it."""
         noise = ("id", "access_level_description")
         normalized = [{k: v for k, v in entry.items() if k not in noise and v is not None} for entry in access_levels]
+
+        for entry in normalized:
+            if "user_id" in entry or "group_id" in entry:
+                entry.pop("access_level", None)
+
         return sorted(normalized, key=lambda entry: sorted(entry.items()))
 
     def _process_configuration(self, project_and_group: str, configuration: dict):

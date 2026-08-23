@@ -70,3 +70,41 @@ class TestTagsDiff:
     def test_desired_state_folds_create_access_level_shortcut(self):
         desired = self.processor._get_desired_state({"v*": {"protected": True, "create_access_level": 40}})
         assert desired == {"v*": {"protected": True, "allowed_to_create": [{"access_level": 40}]}}
+
+    def test_no_diff_for_a_star_tag_whose_state_matches(self):
+        self.processor.gl.get_user_id_cached.return_value = 10843916
+        config = {"*": {"protected": True, "allowed_to_create": [{"user": "vitallica"}]}}
+        tag_in_gitlab = _protected_tag(name="*", access_level=40, user_id=10843916)
+
+        assert self._diff([tag_in_gitlab], config) == ""
+
+    def test_access_level_reported_alongside_a_user_is_not_diffed(self):
+        current = self.processor._normalize_access_levels(
+            [{"id": 1, "access_level": 40, "access_level_description": "A User", "user_id": 42, "group_id": None}]
+        )
+
+        assert current == [{"user_id": 42}]
+
+    def test_access_level_reported_alongside_a_group_is_not_diffed(self):
+        current = self.processor._normalize_access_levels(
+            [{"id": 2, "access_level": 30, "access_level_description": "A Group", "user_id": None, "group_id": 7}]
+        )
+
+        assert current == [{"group_id": 7}]
+
+    def test_a_role_based_access_level_is_still_diffed(self):
+        current = self.processor._normalize_access_levels(
+            [{"id": 3, "access_level": 40, "access_level_description": "Maintainers", "user_id": None}]
+        )
+
+        assert current == [{"access_level": 40}]
+
+    def test_changed_access_level_on_a_star_tag_is_still_loud(self):
+        self.processor.gl.get_user_id_cached.return_value = 10843916
+        config = {"*": {"protected": True, "allowed_to_create": [{"access_level": 30}]}}
+        tag_in_gitlab = _protected_tag(name="*", access_level=40, user_id=10843916)
+
+        diff = self._diff([tag_in_gitlab], config)
+
+        assert "30" in diff
+        assert "10843916" in diff
