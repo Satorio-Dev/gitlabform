@@ -6,6 +6,24 @@ from gitlab.v4.objects import Group, Project, ProjectLabel, GroupLabel
 
 class LabelsProcessor:
 
+    DIFF_KEYS = ["name", "color", "description", "priority"]
+
+    def get_current_labels_for_diff(self, group_or_project: Group | Project) -> Dict[str, Dict]:
+        """Return the labels created directly on the project/group (the only ones
+        managed here), keyed by label name, for the centralized dry-run diff."""
+        labels = group_or_project.labels.list(get_all=True, include_ancestor_groups=False)
+        return {label.name: self._label_for_diff(label.asdict()) for label in labels}
+
+    def get_desired_labels_for_diff(self, configured_labels: Dict) -> Dict[str, Dict]:
+        return {
+            label.get("name", key): self._label_for_diff({"name": key, **label})
+            for key, label in configured_labels.items()
+            if key != "enforce" and isinstance(label, dict)
+        }
+
+    def _label_for_diff(self, label: Dict) -> Dict:
+        return {k: label[k] for k in self.DIFF_KEYS if label.get(k) is not None}
+
     # Groups and Projects share the same API for .labels within python-gitlab
     def process_labels(
         self,

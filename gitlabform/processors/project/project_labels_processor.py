@@ -13,6 +13,13 @@ class ProjectLabelsProcessor(AbstractProcessor):
         super().__init__("labels", gitlab)
         self._labels_processor = LabelsProcessor()
 
+    def _get_current_state(self, project_and_group: str) -> Dict[str, Dict]:
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+        return self._labels_processor.get_current_labels_for_diff(project)
+
+    def _get_desired_state(self, entity_config: Dict) -> Dict[str, Dict]:
+        return self._labels_processor.get_desired_labels_for_diff(entity_config)
+
     def _process_configuration(self, project_and_group: str, configuration: Dict):
         configured_labels = configuration.get("labels", {})
 

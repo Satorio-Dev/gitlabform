@@ -11,8 +11,48 @@ from gitlabform.processors.abstract_processor import AbstractProcessor
 
 
 class SchedulesProcessor(AbstractProcessor):
+    _DIFF_KEYS = ("description", "ref", "cron", "cron_timezone", "active")
+
     def __init__(self, gitlab: GitLab):
         super().__init__("schedules", gitlab)
+
+    def _get_current_state(self, project_and_group: str) -> Dict:
+        """Pipeline schedules, keyed by description, for the centralized dry-run diff.
+        The list endpoint does not include variables, so each schedule is re-read by id.
+        Duplicate descriptions are shown as a list - loudly, as the config cannot
+        address them individually."""
+        project: Project = self.gl.get_project_by_path_cached(project_and_group)
+        current: Dict = {}
+        for listed_schedule in project.pipelineschedules.list(get_all=True):
+            schedule = project.pipelineschedules.get(listed_schedule.id).asdict()
+            entry = {key: schedule[key] for key in self._DIFF_KEYS if schedule.get(key) is not None}
+            entry["variables"] = {
+                variable["key"]: {k: v for k, v in variable.items() if k != "key"}
+                for variable in schedule.get("variables", [])
+            }
+            description = entry["description"]
+            if description in current:
+                previous = current[description]
+                current[description] = previous + [entry] if isinstance(previous, list) else [previous, entry]
+            else:
+                current[description] = entry
+        return current
+
+    def _get_desired_state(self, entity_config: Dict) -> Dict:
+        """Normalize the config to the shape of the current state. The extended cron
+        patterns ("H ...") are rendered per project id at processing time, so they are
+        diffed as written here and may show as a difference against the rendered value."""
+        desired: Dict = {}
+        for description, schedule_config in entity_config.items():
+            if description == "enforce" or not isinstance(schedule_config, dict):
+                continue
+            if schedule_config.get("delete"):
+                desired[description] = {"delete": True}
+                continue
+            entry = {"description": description, **schedule_config}
+            desired[description] = {key: entry[key] for key in self._DIFF_KEYS if entry.get(key) is not None}
+            desired[description]["variables"] = entry.get("variables", {})
+        return desired
 
     def _process_configuration(self, project_and_group: str, configuration: Dict):
         configured_schedules = configuration.get("schedules", {})

@@ -12,6 +12,59 @@ class TagsProcessor(AbstractProcessor):
         super().__init__("tags", gitlab)
         self.strict = strict
 
+    def _get_current_state(self, project_and_group: str) -> dict:
+        """Protected tags, keyed by tag name, for the centralized dry-run diff.
+        Tags that are not protected are not listed by this endpoint, so a tag
+        configured with "protected: false" shows up as "???" on the current side."""
+        project = self.gl.get_project_by_path_cached(project_and_group)
+        current = {}
+        for tag in project.protectedtags.list(get_all=True):
+            tag_dict = tag.asdict()
+            current[tag_dict["name"]] = {
+                "protected": True,
+                "allowed_to_create": self._normalize_access_levels(tag_dict.get("create_access_levels", [])),
+            }
+        return current
+
+    def _get_desired_state(self, entity_config: dict) -> dict:
+        desired: dict = {}
+        for tag in sorted(entity_config):
+            tag_config = entity_config[tag]
+            if not tag_config.get("protected"):
+                desired[tag] = {"protected": False}
+                continue
+            allowed_to_create = [
+                self._resolve_allowed_to_create(config) for config in tag_config.get("allowed_to_create", [])
+            ]
+            if "create_access_level" in tag_config:
+                allowed_to_create.append({"access_level": tag_config["create_access_level"]})
+            desired[tag] = {
+                "protected": True,
+                "allowed_to_create": self._normalize_access_levels(allowed_to_create),
+            }
+        return desired
+
+    def _resolve_allowed_to_create(self, config: dict) -> dict:
+        if "user" in config:
+            user_id = self.gl.get_user_id_cached(config["user"])
+            if user_id is not None:
+                return {"user_id": user_id}
+        elif "group" in config:
+            try:
+                return {"group_id": self.gl.get_group_by_path_cached(config["group"]).get_id()}
+            except GitlabGetError:
+                pass
+        return config
+
+    @staticmethod
+    def _normalize_access_levels(access_levels: list) -> list:
+        """One entry per rule, without the ids and descriptions GitLab adds, and
+        without the access_level it reports next to a named user or group - the config
+        cannot express that one and the apply path never sends it."""
+        noise = ("id", "access_level_description")
+        normalized = [{k: v for k, v in entry.items() if k not in noise and v is not None} for entry in access_levels]
+        return sorted(normalized, key=lambda entry: sorted(entry.items()))
+
     def _process_configuration(self, project_and_group: str, configuration: dict):
         project = self.gl.get_project_by_path_cached(name=project_and_group, lazy=True)
 

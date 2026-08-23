@@ -14,6 +14,13 @@ class GroupLabelsProcessor(AbstractProcessor):
         super().__init__("group_labels", gitlab)
         self._labels_processor = LabelsProcessor()
 
+    def _get_current_state(self, group_path_and_name: str) -> Dict[str, Dict]:
+        group: Group = self.gl.get_group_by_path_cached(group_path_and_name)
+        return self._labels_processor.get_current_labels_for_diff(group)
+
+    def _get_desired_state(self, entity_config: Dict) -> Dict[str, Dict]:
+        return self._labels_processor.get_desired_labels_for_diff(entity_config)
+
     def _process_configuration(self, group_path_and_name: str, configuration: Dict):
         configured_labels = configuration.get("group_labels", {})
 
