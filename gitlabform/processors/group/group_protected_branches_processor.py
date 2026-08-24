@@ -10,6 +10,7 @@ from gitlabform.constants import EXIT_INVALID_INPUT, EXIT_PROCESSING_ERROR
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
 from gitlabform.processors.util.branch_protection import BranchProtection
+from gitlabform.processors.util.failed_writes import FailedWrites
 
 
 class GroupProtectedBranchesProcessor(AbstractProcessor):
@@ -17,6 +18,7 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab, strict: bool):
         super().__init__("group_protected_branches", gitlab)
         self.strict = strict
+        self.failed_writes = FailedWrites("group-level branch protection changes")
 
         self.custom_diff_analyzers["merge_access_levels"] = BranchProtection.naive_access_level_diff_analyzer
         self.custom_diff_analyzers["push_access_levels"] = BranchProtection.naive_access_level_diff_analyzer
@@ -48,10 +50,14 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
 
         gitlab_group: Group = self.gl.get_group_by_path_cached(group)
 
+        self.failed_writes.start()
+
         for branch in sorted(configuration["group_protected_branches"]):
             branch_configuration: dict = configuration["group_protected_branches"][branch]
 
             self.process_branch_protection(gitlab_group, branch, branch_configuration)
+
+        self.failed_writes.raise_if_any(group)
 
     def process_branch_protection(self, group: Group, branch_name: str, branch_config: dict):
         protected_branch: Optional[GroupProtectedBranch] = None
@@ -131,6 +137,7 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
                 sys.exit(EXIT_PROCESSING_ERROR)
             else:
                 error(message)
+                self.failed_writes.record(message)
 
     def unprotect_branch(self, protected_branch: GroupProtectedBranch):
         try:
@@ -143,4 +150,5 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
                 critical(message)
                 sys.exit(EXIT_PROCESSING_ERROR)
             else:
-                warning(message)
+                error(message)
+                self.failed_writes.record(message)

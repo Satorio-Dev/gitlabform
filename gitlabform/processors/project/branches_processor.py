@@ -14,6 +14,7 @@ from gitlabform.constants import EXIT_INVALID_INPUT, EXIT_PROCESSING_ERROR
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
 from gitlabform.processors.util.branch_protection import BranchProtection
+from gitlabform.processors.util.failed_writes import FailedWrites
 from gitlabform.processors.util.difference_logger import DifferenceLogger
 
 
@@ -33,6 +34,7 @@ class BranchesProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab, strict: bool):
         super().__init__("branches", gitlab)
         self.strict = strict
+        self.failed_writes = FailedWrites("branch protection changes")
 
         # Protected Branch API: https://docs.gitlab.com/api/protected_branches/#update-a-protected-branch
         # Behind the scenes gitlab will map "allowed_to_merge" and "merge_access_level" to "merge_access_levels"
@@ -217,6 +219,8 @@ class BranchesProcessor(AbstractProcessor):
 
         project: Project = self.gl.get_project_by_path_cached(project_and_group)
 
+        self.failed_writes.start()
+
         for branch in sorted(configuration["branches"]):
             branch_configuration: dict = self.convert_user_and_group_names_to_ids(configuration["branches"][branch])
 
@@ -227,6 +231,8 @@ class BranchesProcessor(AbstractProcessor):
             }
 
             self.process_branch_protection(project, branch, branch_configuration)
+
+        self.failed_writes.raise_if_any(project_and_group)
 
     def process_branch_protection(self, project: Project, branch_name: str, branch_config: dict):
         """
@@ -392,6 +398,7 @@ class BranchesProcessor(AbstractProcessor):
                 sys.exit(EXIT_PROCESSING_ERROR)
             else:
                 error(message)
+                self.failed_writes.record(message)
 
     def unprotect_branch(self, protected_branch: ProjectProtectedBranch):
         """
@@ -408,7 +415,8 @@ class BranchesProcessor(AbstractProcessor):
                 critical(message)
                 sys.exit(EXIT_PROCESSING_ERROR)
             else:
-                warning(message)
+                error(message)
+                self.failed_writes.record(message)
 
     def convert_user_and_group_names_to_ids(self, branch_config: dict):
         """

@@ -5,6 +5,7 @@ from gitlab import GitlabGetError, GitlabDeleteError, GitlabOperationError
 
 from gitlabform.processors.group.group_protected_branches_processor import GroupProtectedBranchesProcessor
 from gitlabform.processors.util.branch_protection import BranchProtection
+from gitlabform.processors.util.failed_writes import SomeWritesFailed
 
 
 class TestGroupProtectedBranchesProcessor:
@@ -281,3 +282,39 @@ class TestGroupProtectedBranchesProcessor:
         result = BranchProtection.get_list_attribute(protected_branch, "merge_access_levels")
 
         assert result == []
+
+
+class TestGroupProtectedBranchesProcessorFailedWrites:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        self.processor = GroupProtectedBranchesProcessor(self.gitlab, False)
+        self.group = MagicMock()
+        self.processor.gl = MagicMock()
+        self.processor.gl.get_group_by_path_cached.return_value = self.group
+
+    def test__a_branch_gitlab_refuses_fails_the_node_and_the_other_branches_are_still_written(self):
+        self.group.protectedbranches.get.side_effect = GitlabGetError("not found", 404)
+        self.group.protectedbranches.create.side_effect = [GitlabOperationError("no", 400), None]
+
+        with pytest.raises(SomeWritesFailed) as failure:
+            self.processor._process_configuration(
+                "some-group",
+                {"group_protected_branches": {"develop": {"protected": True}, "main": {"protected": True}}},
+            )
+
+        assert self.group.protectedbranches.create.call_count == 2
+        assert "develop" in str(failure.value)
+        assert "some-group" in str(failure.value)
+
+    def test__an_unprotect_gitlab_refuses_fails_the_node_too(self):
+        protected_branch = MagicMock()
+        protected_branch.name = "main"
+        protected_branch.delete.side_effect = GitlabDeleteError("no", 400)
+        self.group.protectedbranches.get.return_value = protected_branch
+
+        with pytest.raises(SomeWritesFailed) as failure:
+            self.processor._process_configuration(
+                "some-group", {"group_protected_branches": {"main": {"protected": False}}}
+            )
+
+        assert "could not be unprotected at group level" in str(failure.value)

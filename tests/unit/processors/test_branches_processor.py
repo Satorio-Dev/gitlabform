@@ -1,8 +1,12 @@
 from unittest.mock import MagicMock
 
+import pytest
+from gitlab import GitlabDeleteError, GitlabGetError, GitlabOperationError
+
 from gitlabform.gitlab import AccessLevel
 from gitlabform.processors.project.branches_processor import BranchesProcessor
 from gitlabform.processors.util.branch_protection import BranchProtection
+from gitlabform.processors.util.failed_writes import SomeWritesFailed
 
 
 class TestBranchesProcessor:
@@ -211,3 +215,71 @@ class TestBranchesProcessor:
         result = BranchProtection.build_patch_request_data(transformed_access_levels, existing_records)
         # Additive Design: Omitted users should be retained, not destroyed.
         assert result == []
+
+
+class TestBranchesProcessorFailedWrites:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        self.processor = BranchesProcessor(self.gitlab, False)
+        self.project = MagicMock()
+        self.processor.gl = MagicMock()
+        self.processor.gl.get_project_by_path_cached.return_value = self.project
+
+    @staticmethod
+    def _two_protected_branches() -> dict:
+        return {"branches": {"develop": {"protected": True}, "main": {"protected": True}}}
+
+    def test__a_branch_gitlab_refuses_fails_the_node_and_the_other_branches_are_still_written(self, caplog):
+        self.project.protectedbranches.get.side_effect = GitlabGetError("not found", 404)
+        self.project.protectedbranches.create.side_effect = [GitlabOperationError("no", 400), None]
+
+        with caplog.at_level("ERROR"):
+            with pytest.raises(SomeWritesFailed) as failure:
+                self.processor._process_configuration("foo/bar", self._two_protected_branches())
+
+        assert self.project.protectedbranches.create.call_count == 2
+        assert "develop" in str(failure.value)
+        assert "foo/bar" in str(failure.value)
+        assert [record.message for record in caplog.records if record.levelname == "ERROR"] == [
+            "Protecting branch 'develop' failed! Error 'no"
+        ]
+
+    def test__a_refusal_reaches_the_caller_that_counts_a_node_failed(self):
+        self.project.protectedbranches.get.side_effect = GitlabGetError("not found", 404)
+        self.project.protectedbranches.create.side_effect = GitlabOperationError("no", 400)
+
+        with pytest.raises(SomeWritesFailed):
+            self.processor.process(
+                "foo/bar",
+                {"branches": {"main": {"protected": True}}},
+                False,
+                False,
+                MagicMock(),
+            )
+
+    def test__branches_gitlab_accepts_leave_the_node_green(self):
+        self.project.protectedbranches.get.side_effect = GitlabGetError("not found", 404)
+
+        self.processor._process_configuration("foo/bar", self._two_protected_branches())
+
+        assert self.project.protectedbranches.create.call_count == 2
+
+    def test__an_unprotect_gitlab_refuses_fails_the_node_too(self):
+        protected_branch = MagicMock()
+        protected_branch.name = "main"
+        protected_branch.delete.side_effect = GitlabDeleteError("no", 400)
+        self.project.protectedbranches.get.return_value = protected_branch
+
+        with pytest.raises(SomeWritesFailed) as failure:
+            self.processor._process_configuration("foo/bar", {"branches": {"main": {"protected": False}}})
+
+        assert "could not be unprotected" in str(failure.value)
+
+    def test__what_one_node_refused_is_not_carried_into_the_next(self):
+        self.project.protectedbranches.get.side_effect = GitlabGetError("not found", 404)
+        self.project.protectedbranches.create.side_effect = GitlabOperationError("no", 400)
+        with pytest.raises(SomeWritesFailed):
+            self.processor._process_configuration("foo/bar", {"branches": {"main": {"protected": True}}})
+
+        self.project.protectedbranches.create.side_effect = None
+        self.processor._process_configuration("foo/baz", {"branches": {"main": {"protected": True}}})
