@@ -174,7 +174,7 @@ class BranchesProcessor(AbstractProcessor):
         """What the list will hold after apply: gitlabform is additive, so every rule
         GitLab has survives, except where it collides with a "No Access" rule - level 0
         is mutually exclusive with any other role."""
-        wanted_role_levels = {rule.get("access_level") for rule in wanted if cls._is_role_rule(rule)}
+        wanted_role_levels = {rule.get("access_level") for rule in wanted if BranchProtection.is_role_rule(rule)}
         no_access_wanted = 0 in wanted_role_levels
         roles_wanted = any(level for level in wanted_role_levels if level)
 
@@ -182,25 +182,16 @@ class BranchesProcessor(AbstractProcessor):
             rule
             for rule in live
             if not (
-                cls._is_role_rule(rule)
+                BranchProtection.is_role_rule(rule)
                 and (
                     (no_access_wanted and rule.get("access_level")) or (roles_wanted and rule.get("access_level") == 0)
                 )
             )
         ]
-        projected += [rule for rule in wanted if not any(cls._is_same_rule(rule, kept) for kept in projected)]
+        projected += [
+            rule for rule in wanted if not any(BranchProtection.rules_match(kept, rule) for kept in projected)
+        ]
         return cls._comparable_access_levels(projected)
-
-    @staticmethod
-    def _is_role_rule(rule: dict) -> bool:
-        return not (rule.get("user_id") or rule.get("group_id") or rule.get("deploy_key_id"))
-
-    @classmethod
-    def _is_same_rule(cls, one: dict, other: dict) -> bool:
-        for key in ("user_id", "group_id", "deploy_key_id"):
-            if one.get(key) is not None:
-                return one.get(key) == other.get(key)
-        return cls._is_role_rule(other) and one.get("access_level") == other.get("access_level")
 
     def _can_proceed(self, project_or_group: str, configuration: dict):
         for branch in sorted(configuration["branches"]):
