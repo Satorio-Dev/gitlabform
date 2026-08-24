@@ -68,7 +68,7 @@ class ProtectedEnvironmentsProcessor(MultipleEntitiesProcessor):
         between the two requests - anyone allowed to deploy to an unprotected environment
         is allowed to deploy to this one, for as long as the second request takes, and for
         good if the run dies in between. GitLab's update endpoint changes the access levels
-        in one request, so that window only opens for a change the endpoint cannot carry,
+        where they stand, so that window only opens for a change the endpoint cannot carry,
         and it says so when it does.
         """
         name = entity_config["name"]
@@ -84,7 +84,8 @@ class ProtectedEnvironmentsProcessor(MultipleEntitiesProcessor):
             self.delete_method(project_and_group, entity_in_gitlab)
             self.protect_method(project_and_group, entity_config)
         else:
-            self.update_method(project_and_group, name, self._update_payload(entity_in_gitlab, entity_config))
+            for request in self._update_requests(self._update_payload(entity_in_gitlab, entity_config)):
+                self.update_method(project_and_group, name, request)
 
         self._read_back_and_report(project_and_group, entity_config)
 
@@ -117,14 +118,53 @@ class ProtectedEnvironmentsProcessor(MultipleEntitiesProcessor):
         return payload
 
     @classmethod
+    def _update_requests(cls, payload: dict) -> list[dict]:
+        """The payload as the requests GitLab takes, in the order it takes them.
+
+        GitLab reads every entry of such a list as one to create and validates it as one,
+        the entries carrying "_destroy" among them, and answers 400 naming a field a
+        deletion has no reason to hold. The same deletions sent by themselves are
+        accepted, so a payload that both creates and destroys goes as two requests - the
+        deletions first, so that a rule the config replaces is gone before its
+        replacement arrives and the endpoint never holds both at once. A payload that
+        only creates, or only destroys, goes as it stands, in one request.
+        """
+        destroying: dict[str, Any] = {}
+        remaining: dict[str, Any] = {}
+        creates = False
+
+        for key, value in payload.items():
+            if key not in cls.KEYS_UPDATABLE_IN_PLACE or not isinstance(value, list):
+                remaining[key] = value
+                continue
+
+            destroyed = [entry for entry in value if cls._destroys(entry)]
+            kept = [entry for entry in value if not cls._destroys(entry)]
+
+            if destroyed:
+                destroying[key] = destroyed
+            if kept:
+                remaining[key] = kept
+                creates = True
+
+        if not destroying or not creates:
+            return [payload]
+
+        return [destroying, remaining]
+
+    @staticmethod
+    def _destroys(entry: Any) -> bool:
+        return isinstance(entry, dict) and bool(entry.get("_destroy"))
+
+    @classmethod
     def _entry_changes(cls, key: str, entries_in_gitlab: list, entries_in_config: list) -> list:
         """The entries to send so that GitLab ends up holding what the config asks for.
 
         An entry of these lists is created when it comes without an id, and deleted when
         it comes with an id and "_destroy". So an entry that already has a counterpart in
         GitLab is left out of the request entirely, an entry that has none is sent to be
-        created, and a counterpart that no entry claims is sent to be deleted - all in the
-        one request, so the environment is never without the rules the config asks for.
+        created, and a counterpart that no entry claims is sent to be deleted. How many
+        requests these go in is _update_requests' to answer.
         """
         paired = pair_entries(entries_in_gitlab, entries_in_config, cls._entries_match)
         claimed = set(paired.values())

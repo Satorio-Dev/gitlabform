@@ -209,7 +209,7 @@ class TestProtectedEnvironmentsProcessorReadBack:
         with pytest.raises(ProtectedEnvironmentsNotWritten):
             self.processor._process_configuration("foo/bar", self._config(production=self._asked_with_a_user_rule()))
 
-        assert self.gitlab.update_a_repository_environment.call_count == 1
+        assert self.gitlab.update_a_repository_environment.call_count == 2
         assert self.gitlab.unprotect_environment.call_count == 0
         assert self.gitlab.protect_a_repository_environment.call_count == 0
 
@@ -244,6 +244,9 @@ class TestProtectedEnvironmentsProcessorUpdateInPlace:
     def _payload(self) -> dict:
         return self.gitlab.update_a_repository_environment.call_args.args[2]
 
+    def _payloads(self) -> list:
+        return [call.args[2] for call in self.gitlab.update_a_repository_environment.call_args_list]
+
     def test__an_update_goes_through_the_update_endpoint_and_never_unprotects(self):
         live = self._live([{"id": 12, "access_level": 30, "user_id": None, "group_id": None}])
         wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}]}
@@ -267,7 +270,10 @@ class TestProtectedEnvironmentsProcessorUpdateInPlace:
 
         self._run(live, wanted, read_back)
 
-        assert self._payload()["deploy_access_levels"] == [{"user_id": 15}, {"id": 13, "_destroy": True}]
+        assert [payload["deploy_access_levels"] for payload in self._payloads()] == [
+            [{"id": 13, "_destroy": True}],
+            [{"user_id": 15}],
+        ]
 
     def test__a_rule_no_entry_claims_is_deleted_in_the_same_request(self):
         live = self._live(
@@ -421,8 +427,195 @@ class TestProtectedEnvironmentsProcessorIdleState:
 
         self.processor._process_configuration("foo/bar", {"protected_environments": {"production": wanted}})
 
-        assert self.gitlab.update_a_repository_environment.call_count == 1
-        assert self.gitlab.update_a_repository_environment.call_args.args[2]["approval_rules"] == [
-            {"user_id": 16, "required_approvals": 1},
-            {"id": 3, "_destroy": True},
+        assert self.gitlab.update_a_repository_environment.call_count == 2
+        assert [
+            call.args[2]["approval_rules"] for call in self.gitlab.update_a_repository_environment.call_args_list
+        ] == [
+            [{"id": 3, "_destroy": True}],
+            [{"user_id": 16, "required_approvals": 1}],
+        ]
+
+
+class TestProtectedEnvironmentsProcessorSplitWrite:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = ProtectedEnvironmentsProcessor(self.gitlab)
+
+    @staticmethod
+    def _config(**environments) -> dict:
+        return {"protected_environments": environments}
+
+    def _run(self, live: dict, wanted: dict, read_back: dict) -> None:
+        self.gitlab.list_protected_environments.side_effect = [[live], [read_back]]
+        self.processor._process_configuration("foo/bar", self._config(production=wanted))
+
+    def _payloads(self) -> list:
+        return [call.args[2] for call in self.gitlab.update_a_repository_environment.call_args_list]
+
+    @staticmethod
+    def _maintainers(entry_id=12) -> dict:
+        return {"id": entry_id, "access_level": 40, "user_id": None, "group_id": None}
+
+    def test__a_new_rule_and_the_rules_it_replaces_go_as_two_requests_the_deletions_first(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [self._maintainers()],
+            "approval_rules": [
+                {"id": 3, "access_level": 40, "user_id": None, "group_id": None, "required_approvals": 1},
+                {"id": 4, "access_level": None, "user_id": 15, "group_id": None, "required_approvals": 1},
+            ],
+        }
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}],
+            "approval_rules": [{"group_id": 9, "required_approvals": 2}],
+        }
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [self._maintainers()],
+            "approval_rules": [
+                {"id": 5, "access_level": None, "user_id": None, "group_id": 9, "required_approvals": 2}
+            ],
+        }
+
+        self._run(live, wanted, read_back)
+
+        assert self._payloads() == [
+            {"approval_rules": [{"id": 3, "_destroy": True}, {"id": 4, "_destroy": True}]},
+            {"approval_rules": [{"group_id": 9, "required_approvals": 2}]},
+        ]
+
+    def test__the_first_request_of_a_split_only_deletes_and_the_second_only_writes(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [self._maintainers()],
+            "approval_rules": [{"id": 3, "access_level": 40, "user_id": None, "group_id": None}],
+        }
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}],
+            "approval_rules": [{"group_id": 9, "required_approvals": 2}],
+        }
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [self._maintainers()],
+            "approval_rules": [
+                {"id": 5, "access_level": None, "user_id": None, "group_id": 9, "required_approvals": 2}
+            ],
+        }
+
+        self._run(live, wanted, read_back)
+
+        deleting, writing = self._payloads()
+        assert all(entry.get("_destroy") for entries in deleting.values() for entry in entries)
+        assert not any("_destroy" in entry for entries in writing.values() for entry in entries)
+
+    def test__a_deletion_in_one_key_and_a_new_entry_in_another_still_go_apart(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [
+                self._maintainers(),
+                {"id": 13, "access_level": None, "user_id": 15, "group_id": None},
+            ],
+            "approval_rules": [],
+        }
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}],
+            "approval_rules": [{"group_id": 9, "required_approvals": 2}],
+        }
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [self._maintainers()],
+            "approval_rules": [
+                {"id": 5, "access_level": None, "user_id": None, "group_id": 9, "required_approvals": 2}
+            ],
+        }
+
+        self._run(live, wanted, read_back)
+
+        assert self._payloads() == [
+            {"deploy_access_levels": [{"id": 13, "_destroy": True}]},
+            {"approval_rules": [{"group_id": 9, "required_approvals": 2}]},
+        ]
+
+    def test__a_key_the_split_does_not_touch_rides_with_the_writing_request(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [{"id": 12, "access_level": 30, "user_id": None, "group_id": None}],
+            "required_approval_count": 0,
+        }
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}],
+            "required_approval_count": 0,
+        }
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [{"id": 14, "access_level": 40, "user_id": None, "group_id": None}],
+            "required_approval_count": 0,
+        }
+
+        self._run(live, wanted, read_back)
+
+        assert self._payloads() == [
+            {"deploy_access_levels": [{"id": 12, "_destroy": True}]},
+            {"deploy_access_levels": [{"access_level": 40}], "required_approval_count": 0},
+        ]
+
+    def test__a_payload_that_only_writes_stays_one_request(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [self._maintainers()],
+        }
+        wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}, {"user_id": 15}]}
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [
+                self._maintainers(),
+                {"id": 14, "access_level": None, "user_id": 15, "group_id": None},
+            ],
+        }
+
+        self._run(live, wanted, read_back)
+
+        assert self._payloads() == [{"deploy_access_levels": [{"user_id": 15}]}]
+
+    def test__a_payload_that_only_deletes_stays_one_request(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [
+                self._maintainers(),
+                {"id": 13, "access_level": None, "user_id": 15, "group_id": None},
+            ],
+            "required_approval_count": 0,
+        }
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}],
+            "required_approval_count": 0,
+        }
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [self._maintainers()],
+            "required_approval_count": 0,
+        }
+
+        self._run(live, wanted, read_back)
+
+        assert self._payloads() == [
+            {"deploy_access_levels": [{"id": 13, "_destroy": True}], "required_approval_count": 0}
         ]
