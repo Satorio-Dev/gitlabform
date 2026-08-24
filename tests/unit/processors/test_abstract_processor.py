@@ -337,3 +337,57 @@ class TestRecursiveDiffAnalyzerIsOrderInsensitive:
     def test__entries_that_are_not_dicts_are_compared_by_value(self) -> None:
         assert not AbstractProcessor.recursive_diff_analyzer("some_key", ["a", "b"], ["b", "a"])
         assert AbstractProcessor.recursive_diff_analyzer("some_key", ["a", "b"], ["a", "c"])
+
+
+class TestNeedsUpdateReadsEveryKey:
+    _ACCESS_LEVEL_LISTS = ("merge_access_levels", "push_access_levels", "unprotect_access_levels")
+
+    @staticmethod
+    def _processor_with_custom_analyzers() -> _TestableProcessor:
+        processor = _make_processor("branches")
+        for key in TestNeedsUpdateReadsEveryKey._ACCESS_LEVEL_LISTS:
+            processor.custom_diff_analyzers[key] = AbstractProcessor.recursive_diff_analyzer
+        return processor
+
+    @staticmethod
+    def _in_gitlab() -> dict:
+        entity = {"approval_rules": [{"name": "default", "approvals_required": 1}]}
+        for key in TestNeedsUpdateReadsEveryKey._ACCESS_LEVEL_LISTS:
+            entity[key] = [{"access_level": 40, "user_id": None, "group_id": None}]
+        return entity
+
+    @staticmethod
+    def _in_config() -> dict:
+        entity = {"approval_rules": [{"name": "default", "approvals_required": 1}]}
+        for key in TestNeedsUpdateReadsEveryKey._ACCESS_LEVEL_LISTS:
+            entity[key] = [{"access_level": 40}]
+        return entity
+
+    def test__an_entity_that_matches_on_every_key_needs_no_update(self) -> None:
+        assert not self._processor_with_custom_analyzers()._needs_update(self._in_gitlab(), self._in_config())
+
+    def test__a_difference_behind_matching_custom_analyzed_keys_is_not_lost(self) -> None:
+        in_config = self._in_config()
+        in_config["approval_rules"] = [{"name": "default", "approvals_required": 2}]
+
+        assert self._processor_with_custom_analyzers()._needs_update(self._in_gitlab(), in_config)
+
+    def test__a_difference_in_one_custom_analyzed_key_survives_the_others(self) -> None:
+        in_config = self._in_config()
+        in_config["unprotect_access_levels"] = [{"access_level": 30}]
+
+        assert self._processor_with_custom_analyzers()._needs_update(self._in_gitlab(), in_config)
+
+    def test__every_custom_analyzed_key_is_read(self) -> None:
+        read: list = []
+
+        def recording_analyzer(key, in_gitlab, in_configuration) -> bool:
+            read.append(key)
+            return False
+
+        processor = _make_processor("branches")
+        for key in self._ACCESS_LEVEL_LISTS:
+            processor.custom_diff_analyzers[key] = recording_analyzer
+
+        assert not processor._needs_update(self._in_gitlab(), self._in_config())
+        assert sorted(read) == sorted(self._ACCESS_LEVEL_LISTS)

@@ -243,7 +243,11 @@ class AbstractProcessor(ABC):
         keys_on_both_sides = set(entity_in_configuration.keys()) & set(entity_in_gitlab.keys())
         for key in keys_on_both_sides:
             if key in self.custom_diff_analyzers:
-                return self.custom_diff_analyzers[key](key, entity_in_gitlab[key], entity_in_configuration[key])
+                if self.custom_diff_analyzers[key](key, entity_in_gitlab[key], entity_in_configuration[key]):
+                    debug(f"the custom diff analyzer of [{key}] reports a difference")
+                    return True
+
+                continue
 
             if entity_in_gitlab[key] != entity_in_configuration[key]:
                 debug(
