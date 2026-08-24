@@ -87,6 +87,17 @@ class UserTransformer(ConfigurationTransformer):
             # under the given path
             pass
 
+        try:
+            for node_coordinate in processor.get_nodes(
+                "projects_and_groups.*.protected_environments.*.approval_rules.user",
+                mustexist=True,
+            ):
+                user = node_coordinate.parent.pop("user")
+
+                node_coordinate.parent["user_id"] = self.gitlab._get_user_id(user)
+        except YAMLPathException:
+            pass
+
         info("Getting user ids for users defined in merge_requests_approval_rules config")
         try:
             for node_coordinate in processor.get_nodes(
@@ -124,6 +135,17 @@ class GroupTransformer(ConfigurationTransformer):
         except YAMLPathException as e:
             # this just means that we haven't found any keys in YAML
             # under the given path
+            pass
+
+        try:
+            for node_coordinate in processor.get_nodes(
+                "projects_and_groups.*.protected_environments.*.approval_rules.group",
+                mustexist=True,
+            ):
+                group = node_coordinate.parent.pop("group")
+                node_coordinate.parent["group_id"] = self.gitlab._get_group_id(group)
+
+        except YAMLPathException:
             pass
 
         try:
