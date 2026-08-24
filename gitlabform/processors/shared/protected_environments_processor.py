@@ -125,9 +125,13 @@ class ProtectedEnvironmentsProcessor(MultipleEntitiesProcessor):
         the entries carrying "_destroy" among them, and answers 400 naming a field a
         deletion has no reason to hold. The same deletions sent by themselves are
         accepted, so a payload that both creates and destroys goes as two requests - the
-        deletions first, so that a rule the config replaces is gone before its
-        replacement arrives and the endpoint never holds both at once. A payload that
-        only creates, or only destroys, goes as it stands, in one request.
+        writes first, because this endpoint adds to the list it is given instead of
+        replacing it, and so deletions sent first leave nothing behind them: a config
+        that replaces every deploy access level an environment has is answered 422,
+        "Deploy access levels is too short (minimum is 1 character)". Sent after what
+        replaces them, the same deletions meet a list that was never empty, and a new
+        approval rule does not collide with the rules the second request takes away.
+        A payload that only creates, or only destroys, goes as it stands, in one request.
         """
         destroying: dict[str, Any] = {}
         remaining: dict[str, Any] = {}
@@ -150,7 +154,7 @@ class ProtectedEnvironmentsProcessor(MultipleEntitiesProcessor):
         if not destroying or not creates:
             return [payload]
 
-        return [destroying, remaining]
+        return [remaining, destroying]
 
     @staticmethod
     def _destroys(entry: Any) -> bool:

@@ -271,8 +271,8 @@ class TestProtectedEnvironmentsProcessorUpdateInPlace:
         self._run(live, wanted, read_back)
 
         assert [payload["deploy_access_levels"] for payload in self._payloads()] == [
-            [{"id": 13, "_destroy": True}],
             [{"user_id": 15}],
+            [{"id": 13, "_destroy": True}],
         ]
 
     def test__a_rule_no_entry_claims_is_deleted_in_the_same_request(self):
@@ -431,8 +431,8 @@ class TestProtectedEnvironmentsProcessorIdleState:
         assert [
             call.args[2]["approval_rules"] for call in self.gitlab.update_a_repository_environment.call_args_list
         ] == [
-            [{"id": 3, "_destroy": True}],
             [{"user_id": 16, "required_approvals": 1}],
+            [{"id": 3, "_destroy": True}],
         ]
 
 
@@ -457,7 +457,7 @@ class TestProtectedEnvironmentsProcessorSplitWrite:
     def _maintainers(entry_id=12) -> dict:
         return {"id": entry_id, "access_level": 40, "user_id": None, "group_id": None}
 
-    def test__a_new_rule_and_the_rules_it_replaces_go_as_two_requests_the_deletions_first(self):
+    def test__a_new_rule_and_the_rules_it_replaces_go_as_two_requests_the_write_first(self):
         live = {
             "id": 7,
             "name": "production",
@@ -484,11 +484,11 @@ class TestProtectedEnvironmentsProcessorSplitWrite:
         self._run(live, wanted, read_back)
 
         assert self._payloads() == [
-            {"approval_rules": [{"id": 3, "_destroy": True}, {"id": 4, "_destroy": True}]},
             {"approval_rules": [{"group_id": 9, "required_approvals": 2}]},
+            {"approval_rules": [{"id": 3, "_destroy": True}, {"id": 4, "_destroy": True}]},
         ]
 
-    def test__the_first_request_of_a_split_only_deletes_and_the_second_only_writes(self):
+    def test__the_first_request_of_a_split_only_writes_and_the_second_only_deletes(self):
         live = {
             "id": 7,
             "name": "production",
@@ -511,9 +511,9 @@ class TestProtectedEnvironmentsProcessorSplitWrite:
 
         self._run(live, wanted, read_back)
 
-        deleting, writing = self._payloads()
-        assert all(entry.get("_destroy") for entries in deleting.values() for entry in entries)
+        writing, deleting = self._payloads()
         assert not any("_destroy" in entry for entries in writing.values() for entry in entries)
+        assert all(entry.get("_destroy") for entries in deleting.values() for entry in entries)
 
     def test__a_deletion_in_one_key_and_a_new_entry_in_another_still_go_apart(self):
         live = {
@@ -542,8 +542,8 @@ class TestProtectedEnvironmentsProcessorSplitWrite:
         self._run(live, wanted, read_back)
 
         assert self._payloads() == [
-            {"deploy_access_levels": [{"id": 13, "_destroy": True}]},
             {"approval_rules": [{"group_id": 9, "required_approvals": 2}]},
+            {"deploy_access_levels": [{"id": 13, "_destroy": True}]},
         ]
 
     def test__a_key_the_split_does_not_touch_rides_with_the_writing_request(self):
@@ -568,8 +568,38 @@ class TestProtectedEnvironmentsProcessorSplitWrite:
         self._run(live, wanted, read_back)
 
         assert self._payloads() == [
-            {"deploy_access_levels": [{"id": 12, "_destroy": True}]},
             {"deploy_access_levels": [{"access_level": 40}], "required_approval_count": 0},
+            {"deploy_access_levels": [{"id": 12, "_destroy": True}]},
+        ]
+
+    def test__a_deploy_access_level_list_replaced_whole_is_never_empty_between_the_requests(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [
+                {"id": 21, "access_level": None, "user_id": 15, "group_id": None},
+                {"id": 22, "access_level": None, "user_id": 16, "group_id": None},
+                {"id": 23, "access_level": None, "user_id": 17, "group_id": None},
+            ],
+        }
+        wanted = {"name": "production", "deploy_access_levels": [{"group_id": 9}]}
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [{"id": 24, "access_level": None, "user_id": None, "group_id": 9}],
+        }
+
+        self._run(live, wanted, read_back)
+
+        assert self._payloads() == [
+            {"deploy_access_levels": [{"group_id": 9}]},
+            {
+                "deploy_access_levels": [
+                    {"id": 21, "_destroy": True},
+                    {"id": 22, "_destroy": True},
+                    {"id": 23, "_destroy": True},
+                ]
+            },
         ]
 
     def test__a_payload_that_only_writes_stays_one_request(self):
