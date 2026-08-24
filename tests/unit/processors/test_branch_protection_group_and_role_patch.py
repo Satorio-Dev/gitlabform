@@ -81,12 +81,12 @@ LIVE_ALLOWED_TO_MERGE = [
 
 
 def test_group_name_is_resolved_onto_the_group_id_key():
-    """Rules out a key-name mismatch: the transformed group rule does carry `group_id`."""
+    """Rules out a key-name mismatch: the transformed group rule does carry `group_id`,
+    and no access_level of its own - unlike the GitLab record it must match."""
     transformed = transform_config(LIVE_ALLOWED_TO_MERGE)
 
     assert transformed[1]["group_id"] == MERCHANTO_LEADS_ID
     assert "group" not in transformed[1]
-    # ... and it carries no access_level of its own, unlike the GitLab record it must match.
     assert transformed[1]["access_level"] is None
 
 
