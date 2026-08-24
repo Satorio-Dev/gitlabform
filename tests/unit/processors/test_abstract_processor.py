@@ -219,3 +219,121 @@ class TestRecursiveDiffAnalyzer:
         modified_cfg[1]["group_inheritance_type"] = 1
 
         assert AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", self._cfg_a, modified_cfg)
+
+
+class TestRecursiveDiffAnalyzerIsOrderInsensitive:
+    @staticmethod
+    def _in_gitlab() -> list:
+        return [
+            {
+                "access_level": 30,
+                "access_level_description": "Developers",
+                "user_id": None,
+                "group_id": None,
+                "group_inheritance_type": 0,
+            },
+            {
+                "access_level": 40,
+                "access_level_description": "John Doe",
+                "user_id": 967,
+                "group_id": None,
+                "group_inheritance_type": 0,
+            },
+        ]
+
+    @staticmethod
+    def _in_config() -> list:
+        return [
+            {"access_level": 40, "user_id": 967},
+            {"access_level": 30},
+        ]
+
+    def test__the_same_entries_in_another_order_are_not_a_difference(self) -> None:
+        assert not AbstractProcessor.recursive_diff_analyzer(
+            "deploy_access_levels", self._in_gitlab(), self._in_config()
+        )
+
+        assert not AbstractProcessor.recursive_diff_analyzer(
+            "deploy_access_levels", list(reversed(self._in_gitlab())), self._in_config()
+        )
+
+        assert not AbstractProcessor.recursive_diff_analyzer(
+            "deploy_access_levels", self._in_gitlab(), list(reversed(self._in_config()))
+        )
+
+    def test__another_composition_is_a_difference_in_every_order(self) -> None:
+        in_config = self._in_config()
+        in_config[0] = {"access_level": 40, "user_id": 968}
+
+        assert AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", self._in_gitlab(), in_config)
+
+        assert AbstractProcessor.recursive_diff_analyzer(
+            "deploy_access_levels", list(reversed(self._in_gitlab())), in_config
+        )
+
+        assert AbstractProcessor.recursive_diff_analyzer(
+            "deploy_access_levels", self._in_gitlab(), list(reversed(in_config))
+        )
+
+    def test__an_entry_gitlab_reports_nothing_of_is_a_difference(self) -> None:
+        in_config = self._in_config()
+        in_config[1] = {"group_id": 12}
+
+        assert AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", self._in_gitlab(), in_config)
+
+    def test__another_value_of_a_declared_key_is_a_difference(self) -> None:
+        in_config = self._in_config()
+        in_config[0] = {"access_level": 40, "user_id": 967, "group_inheritance_type": 1}
+
+        assert AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", self._in_gitlab(), in_config)
+
+    def test__one_counterpart_is_not_spent_on_two_entries(self) -> None:
+        in_gitlab = [
+            {"access_level": 40, "user_id": 967},
+            {"access_level": 40, "user_id": 968},
+        ]
+        in_config = [
+            {"access_level": 40},
+            {"access_level": 40},
+        ]
+
+        assert not AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", in_gitlab, in_config)
+
+        in_config[1] = {"access_level": 30}
+
+        assert AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", in_gitlab, in_config)
+
+    def test__an_entry_with_a_choice_leaves_the_counterpart_another_entry_needs(self) -> None:
+        in_gitlab = [
+            {"access_level": 40, "user_id": 967},
+            {"access_level": 40, "user_id": 968},
+        ]
+        in_config = [
+            {"access_level": 40},
+            {"user_id": 967},
+        ]
+
+        assert not AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", in_gitlab, in_config)
+
+        in_config[1] = {"user_id": 969}
+
+        assert AbstractProcessor.recursive_diff_analyzer("deploy_access_levels", in_gitlab, in_config)
+
+    def test__another_number_of_entries_is_a_difference(self) -> None:
+        assert AbstractProcessor.recursive_diff_analyzer(
+            "deploy_access_levels", self._in_gitlab(), self._in_config()[:1]
+        )
+
+    def test__nested_lists_are_compared_regardless_of_order(self) -> None:
+        in_gitlab = [{"name": "prod", "rules": [{"user_id": 967}, {"user_id": 968}]}]
+        in_config = [{"name": "prod", "rules": [{"user_id": 968}, {"user_id": 967}]}]
+
+        assert not AbstractProcessor.recursive_diff_analyzer("protected_environments", in_gitlab, in_config)
+
+        in_config[0]["rules"] = [{"user_id": 968}, {"user_id": 969}]
+
+        assert AbstractProcessor.recursive_diff_analyzer("protected_environments", in_gitlab, in_config)
+
+    def test__entries_that_are_not_dicts_are_compared_by_value(self) -> None:
+        assert not AbstractProcessor.recursive_diff_analyzer("some_key", ["a", "b"], ["b", "a"])
+        assert AbstractProcessor.recursive_diff_analyzer("some_key", ["a", "b"], ["a", "c"])

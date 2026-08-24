@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from logging import debug
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import requests
 from logging import info
@@ -254,28 +254,70 @@ class AbstractProcessor(ABC):
         return False
 
     @staticmethod
-    def recursive_diff_analyzer(cfg_key: str, cfg_in_gitlab: list, local_cfg: list):
+    def recursive_diff_analyzer(cfg_key: str, cfg_in_gitlab: list, local_cfg: list) -> bool:
         """
-        :return: True if the lists are NOT equal, False otherwise
+        :return: True if the lists hold a different set of entries, False otherwise.
+
+        The order GitLab returns the entries in is not the order they are declared in,
+        so an entry is compared against whichever counterpart it matches, not against
+        the one that happens to share its index.
         """
         if len(cfg_in_gitlab) != len(local_cfg):
             return True
 
-        for index in range(len(cfg_in_gitlab)):
-            from_gitlab = {k: v for k, v in cfg_in_gitlab[index].items() if v is not None}
-            from_local_cfg = local_cfg[index]
+        taken: dict[int, int] = {}
 
-            keys_on_both_sides = set(from_gitlab.keys()) & set(from_local_cfg.keys())
+        def take(local_index: int, tried: set[int]) -> bool:
+            for gitlab_index in range(len(cfg_in_gitlab)):
+                if gitlab_index in tried:
+                    continue
+                if not AbstractProcessor._entries_match(cfg_in_gitlab[gitlab_index], local_cfg[local_index]):
+                    continue
 
-            for key in keys_on_both_sides:
-                if isinstance(from_gitlab[key], list) and isinstance(from_local_cfg[key], list):
-                    AbstractProcessor.recursive_diff_analyzer(key, from_gitlab[key], from_local_cfg[key])
-
-                if from_gitlab[key] != from_local_cfg[key]:
-                    debug(f"* A <{key}> in [{cfg_key}] differs:\n GitLab :: {from_gitlab} != Local :: {from_local_cfg}")
+                tried.add(gitlab_index)
+                if gitlab_index not in taken or take(taken[gitlab_index], tried):
+                    taken[gitlab_index] = local_index
                     return True
 
+            return False
+
+        for local_index in range(len(local_cfg)):
+            if not take(local_index, set()):
+                debug(
+                    f"* An entry of [{cfg_key}] has no counterpart in GitLab:"
+                    f"\n Local :: {local_cfg[local_index]} not in GitLab :: {cfg_in_gitlab}"
+                )
+                return True
+
         return False
+
+    @staticmethod
+    def _entries_match(entry_in_gitlab: Any, entry_in_configuration: Any) -> bool:
+        """
+        :return: True if the two entries agree on every key they both declare.
+
+        An entry the configuration declares only by keys GitLab does not report is a
+        different entry, not an entry there is nothing to disagree about.
+        """
+        if not isinstance(entry_in_gitlab, dict) or not isinstance(entry_in_configuration, dict):
+            return bool(entry_in_gitlab == entry_in_configuration)
+
+        from_gitlab = {k: v for k, v in entry_in_gitlab.items() if v is not None}
+        keys_on_both_sides = set(from_gitlab.keys()) & set(entry_in_configuration.keys())
+
+        if not keys_on_both_sides:
+            return not entry_in_configuration
+
+        for key in keys_on_both_sides:
+            if isinstance(from_gitlab[key], list) and isinstance(entry_in_configuration[key], list):
+                if AbstractProcessor.recursive_diff_analyzer(key, from_gitlab[key], entry_in_configuration[key]):
+                    return False
+                continue
+
+            if from_gitlab[key] != entry_in_configuration[key]:
+                return False
+
+        return True
 
     def _can_proceed(self, project_or_group: str, configuration: dict):
         return True
