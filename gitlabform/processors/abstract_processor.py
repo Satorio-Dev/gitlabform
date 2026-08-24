@@ -8,6 +8,7 @@ from logging import info
 from gitlabform.gitlab import GitLab, PythonGitlab
 from gitlabform.gitlab import GitlabWrapper
 from gitlabform.output import EffectiveConfigurationFile
+from gitlabform.run_summary import run_summary
 from gitlabform.processors.util.decorators import configuration_to_safe_dict
 from gitlabform.processors.util.entity_matching import pair_entries
 from gitlabform.processors.util.difference_logger import (
@@ -65,7 +66,8 @@ class AbstractProcessor(ABC):
             else:
                 info(f"Processing section '{self.configuration_name}'")
                 if self._can_proceed(project_or_project_and_group, configuration):
-                    self._process_configuration_with_retries(project_or_project_and_group, configuration)
+                    with run_summary.applying(project_or_project_and_group, self.configuration_name):
+                        self._process_configuration_with_retries(project_or_project_and_group, configuration)
 
             effective_configuration.add_configuration(
                 project_or_project_and_group,

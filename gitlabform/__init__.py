@@ -32,6 +32,7 @@ from gitlabform.output import EffectiveConfigurationFile
 from gitlabform.processors.application import ApplicationProcessors
 from gitlabform.processors.group import GroupProcessors
 from gitlabform.processors.project import ProjectProcessors
+from gitlabform.run_summary import run_summary
 
 console = Console()
 
@@ -115,6 +116,8 @@ class GitLabForm:
                 sys.exit(EXIT_INVALID_INPUT)
 
         self.gitlab, self.configuration = self._initialize_configuration_and_gitlab()
+
+        run_summary.watch(self.gitlab.session)
 
         self.application_processors = ApplicationProcessors(self.gitlab, self.configuration, self.strict)
         self.group_processors = GroupProcessors(self.gitlab, self.configuration, self.strict)
@@ -696,12 +699,20 @@ class GitLabForm:
             for project_number in failed_projects.keys():
                 console.print(f"Failed project {project_number}: {failed_projects[project_number]}", style="red")
 
-        if len(failed_groups) > 0 or len(failed_projects) > 0:
+        failed = [failed_groups[number] for number in sorted(failed_groups)] + [
+            failed_projects[number] for number in sorted(failed_projects)
+        ]
+
+        if len(failed) == 0:
+            if successful_groups > 0 or successful_projects > 0:
+                console.print("All requested groups/projects processed successfully! :sparkles:", style="green")
+            else:
+                console.print("Nothing to do.", style="yellow")
+
+        run_summary.show(successful_groups, successful_projects, failed)
+
+        if len(failed) > 0:
             sys.exit(EXIT_PROCESSING_ERROR)
-        elif successful_groups > 0 or successful_projects > 0:
-            console.print("All requested groups/projects processed successfully! :sparkles:", style="green")
-        else:
-            console.print("Nothing to do.", style="yellow")
 
     @classmethod
     def _info_group_count(cls, prefix, i: int, n: int, second_color: str, second_text: str) -> None:

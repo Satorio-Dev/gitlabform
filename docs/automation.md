@@ -28,6 +28,27 @@ my_whole_other_group:
 Note that as a standard best practice you should not put your GitLab access token in your `config.yml` (unless it is
 encrypted) for security reasons - please set it in the `GITLAB_TOKEN` environment variable instead.
 
+### Reading the result of a run from a script
+
+The last line a run writes to stdout is meant for a program rather than for a person:
+
+```text
+GITLABFORM_SUMMARY: {"groups_ok": 1, "projects_ok": 2, "failed": ["my-group/project_3"], "changes": {"my-group/project_1": ["branches", "files"]}}
+```
+
+It is one line of JSON, whatever the width of the terminal, and it is written directly to stdout rather than through
+the formatter that writes the rest of the output - so a name longer than the terminal is not wrapped onto a second
+line. Match it by its `GITLABFORM_SUMMARY:` prefix rather than by its position.
+
+| key | meaning |
+|-----|---------|
+| `groups_ok` | how many groups were processed without an error |
+| `projects_ok` | how many projects were processed without an error |
+| `failed` | the groups and then the projects that failed, by name, in the order they were processed |
+| `changes` | for each group or project, the sections in which a request that changed something was accepted by GitLab - a node that needed no change is not listed at all, and a `--noop` run lists none |
+
+The exit code is unchanged: non-zero when `failed` is not empty.
+
 For GitLab CI a secure place to set it would be a [Protected Variable in the project configuration](https://docs.gitlab.com/ee/ci/variables/#protected-cicd-variables).
 
 ## Running automatically for new projects
