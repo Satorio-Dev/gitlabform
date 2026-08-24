@@ -9,6 +9,7 @@ from gitlabform.gitlab import GitLab, PythonGitlab
 from gitlabform.gitlab import GitlabWrapper
 from gitlabform.output import EffectiveConfigurationFile
 from gitlabform.processors.util.decorators import configuration_to_safe_dict
+from gitlabform.processors.util.entity_matching import pair_entries
 from gitlabform.processors.util.difference_logger import (
     DifferenceLogger,
     NOTHING_TO_DELETE,
@@ -269,24 +270,10 @@ class AbstractProcessor(ABC):
         if len(cfg_in_gitlab) != len(local_cfg):
             return True
 
-        taken: dict[int, int] = {}
-
-        def take(local_index: int, tried: set[int]) -> bool:
-            for gitlab_index in range(len(cfg_in_gitlab)):
-                if gitlab_index in tried:
-                    continue
-                if not AbstractProcessor._entries_match(cfg_in_gitlab[gitlab_index], local_cfg[local_index]):
-                    continue
-
-                tried.add(gitlab_index)
-                if gitlab_index not in taken or take(taken[gitlab_index], tried):
-                    taken[gitlab_index] = local_index
-                    return True
-
-            return False
+        paired = pair_entries(cfg_in_gitlab, local_cfg, AbstractProcessor._entries_match)
 
         for local_index in range(len(local_cfg)):
-            if not take(local_index, set()):
+            if local_index not in paired:
                 debug(
                     f"* An entry of [{cfg_key}] has no counterpart in GitLab:"
                     f"\n Local :: {local_cfg[local_index]} not in GitLab :: {cfg_in_gitlab}"

@@ -209,8 +209,9 @@ class TestProtectedEnvironmentsProcessorReadBack:
         with pytest.raises(ProtectedEnvironmentsNotWritten):
             self.processor._process_configuration("foo/bar", self._config(production=self._asked_with_a_user_rule()))
 
-        assert self.gitlab.unprotect_environment.call_count == 1
-        assert self.gitlab.protect_a_repository_environment.call_count == 1
+        assert self.gitlab.update_a_repository_environment.call_count == 1
+        assert self.gitlab.unprotect_environment.call_count == 0
+        assert self.gitlab.protect_a_repository_environment.call_count == 0
 
     def test__what_one_node_lost_is_not_carried_into_the_next(self):
         self.gitlab.list_protected_environments.side_effect = [[], [self._stored()]]
@@ -220,3 +221,143 @@ class TestProtectedEnvironmentsProcessorReadBack:
         kept = [{"id": 3, "user_id": 15, "required_approvals": 1}]
         self.gitlab.list_protected_environments.side_effect = [[], [self._stored(approval_rules=kept)]]
         self.processor._process_configuration("foo/baz", self._config(production=self._asked_with_a_user_rule()))
+
+
+class TestProtectedEnvironmentsProcessorUpdateInPlace:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = ProtectedEnvironmentsProcessor(self.gitlab)
+
+    @staticmethod
+    def _config(**environments) -> dict:
+        return {"protected_environments": environments}
+
+    @staticmethod
+    def _live(deploy_access_levels: list, **rest) -> dict:
+        return {"id": 7, "name": "production", "deploy_access_levels": deploy_access_levels, **rest}
+
+    def _run(self, live: dict, wanted: dict, read_back: dict) -> None:
+        self.gitlab.list_protected_environments.side_effect = [[live], [read_back]]
+        self.processor._process_configuration("foo/bar", self._config(production=wanted))
+
+    def _payload(self) -> dict:
+        return self.gitlab.update_a_repository_environment.call_args.args[2]
+
+    def test__an_update_goes_through_the_update_endpoint_and_never_unprotects(self):
+        live = self._live([{"id": 12, "access_level": 30, "user_id": None, "group_id": None}])
+        wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}]}
+        read_back = self._live([{"id": 13, "access_level": 40, "user_id": None, "group_id": None}])
+
+        self._run(live, wanted, read_back)
+
+        assert self.gitlab.unprotect_environment.call_count == 0
+        assert self.gitlab.protect_a_repository_environment.call_count == 0
+        assert self.gitlab.update_a_repository_environment.call_args.args[:2] == ("foo/bar", "production")
+
+    def test__an_entry_that_already_has_a_counterpart_is_left_out_of_the_update(self):
+        kept = {"id": 12, "access_level": 40, "user_id": None, "group_id": None}
+        dropped = {"id": 13, "access_level": 30, "user_id": None, "group_id": None}
+        live = self._live([kept, dropped])
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}, {"user_id": 15}],
+        }
+        read_back = self._live([kept, {"id": 14, "access_level": None, "user_id": 15, "group_id": None}])
+
+        self._run(live, wanted, read_back)
+
+        assert self._payload()["deploy_access_levels"] == [{"user_id": 15}, {"id": 13, "_destroy": True}]
+
+    def test__a_rule_no_entry_claims_is_deleted_in_the_same_request(self):
+        live = self._live(
+            [
+                {"id": 12, "access_level": 40, "user_id": None, "group_id": None},
+                {"id": 13, "access_level": None, "user_id": 15, "group_id": None},
+            ]
+        )
+        wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}]}
+        read_back = self._live([{"id": 12, "access_level": 40, "user_id": None, "group_id": None}])
+
+        self._run(live, wanted, read_back)
+
+        assert self.gitlab.update_a_repository_environment.call_count == 1
+        assert self.gitlab.unprotect_environment.call_count == 0
+        assert self._payload()["deploy_access_levels"] == [{"id": 13, "_destroy": True}]
+
+    def test__a_key_the_config_does_not_declare_is_not_touched_by_the_update(self):
+        live = self._live(
+            [{"id": 12, "access_level": 30, "user_id": None, "group_id": None}],
+            approval_rules=[{"id": 3, "user_id": 15}],
+        )
+        wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}]}
+        read_back = self._live(
+            [{"id": 13, "access_level": 40, "user_id": None, "group_id": None}],
+            approval_rules=[{"id": 3, "user_id": 15}],
+        )
+
+        self._run(live, wanted, read_back)
+
+        assert "approval_rules" in live
+        assert "approval_rules" not in self._payload()
+
+    def test__a_key_the_update_endpoint_does_not_carry_deletes_and_protects_anew_out_loud(self, caplog):
+        live = self._live(
+            [{"id": 12, "access_level": 40, "user_id": None, "group_id": None}],
+            required_approval_count=0,
+        )
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}],
+            "required_approval_count": 2,
+        }
+        read_back = self._live(
+            [{"id": 13, "access_level": 40, "user_id": None, "group_id": None}],
+            required_approval_count=2,
+        )
+
+        with caplog.at_level("WARNING"):
+            self._run(live, wanted, read_back)
+
+        assert self.gitlab.update_a_repository_environment.call_count == 0
+        assert self.gitlab.unprotect_environment.call_count == 1
+        assert self.gitlab.protect_a_repository_environment.call_count == 1
+        warnings = [record.message for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "required_approval_count" in warnings[0]
+        assert "unprotected" in warnings[0]
+
+    def test__an_entry_gitlab_reports_without_an_id_cannot_be_deleted_and_says_so(self, caplog):
+        live = self._live([{"access_level": 30, "user_id": None, "group_id": None}])
+        wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}]}
+        read_back = self._live([{"id": 13, "access_level": 40, "user_id": None, "group_id": None}])
+
+        with caplog.at_level("WARNING"):
+            self._run(live, wanted, read_back)
+
+        assert self._payload()["deploy_access_levels"] == [{"access_level": 40}]
+        warnings = [record.message for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "without an id" in warnings[0]
+
+    def test__an_update_gitlab_kept_whole_is_silent(self, caplog):
+        live = self._live([{"id": 12, "access_level": 30, "user_id": None, "group_id": None}])
+        wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}]}
+        read_back = self._live([{"id": 13, "access_level": 40, "user_id": None, "group_id": None}])
+
+        with caplog.at_level("WARNING"):
+            self._run(live, wanted, read_back)
+
+        assert [record.message for record in caplog.records if record.levelname in ("ERROR", "WARNING")] == []
+
+    def test__what_the_update_lost_fails_the_node(self):
+        live = self._live([{"id": 12, "access_level": 30, "user_id": None, "group_id": None}])
+        wanted = {"name": "production", "deploy_access_levels": [{"access_level": 40}]}
+        read_back = self._live([{"id": 12, "access_level": 30, "user_id": None, "group_id": None}])
+
+        self.gitlab.list_protected_environments.side_effect = [[live], [read_back]]
+
+        with pytest.raises(ProtectedEnvironmentsNotWritten) as failure:
+            self.processor._process_configuration("foo/bar", self._config(production=wanted))
+
+        assert "deploy_access_levels" in str(failure.value)
