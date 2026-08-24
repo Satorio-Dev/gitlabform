@@ -2,7 +2,7 @@
 
 A fork of [gitlabform/gitlabform](https://github.com/gitlabform/gitlabform),
 branched at upstream `9ab386c` (*refactor(processors): centralize dry-run diff in
-AbstractProcessor*, #1353). Fourteen commits on `satorio-series`. The upstream
+AbstractProcessor*, #1353). Twenty-four commits on `satorio-series`. The upstream
 README is kept below, unchanged.
 
 ## About this fork
@@ -43,6 +43,32 @@ it says true.
   `\)` became `\ )`, silently, with nothing in the log. Measured on a live
   tenant: `commit_message_regex` 207 → 209 characters without the fix, 207 → 207
   with it.
+
+### Hardened by dogfooding
+
+Nine further commits come straight from running this fork against a live
+70-node tenant, each fixing something the run itself exposed:
+
+* access-level lists compare as sets, not by index — a reordered list no longer
+  triggers a doomed update (`400: user has already been taken` on every apply);
+* an entity diff reads **every** key before declaring "no change" — one matching
+  key no longer hides a differing one behind set-iteration order;
+* protected environments are read back after writing, and anything GitLab
+  silently dropped (an approval rule whose user lacks the role) fails the node
+  loudly instead of reporting success;
+* a branch protection or remote mirror write GitLab refused now fails the node —
+  no more green runs over red writes;
+* protected environment updates go through `PUT` in place, closing the window
+  where `DELETE`+`POST` left the environment unprotected;
+* an unchanged environment with approval rules no longer writes on every run;
+* a run ends with `GITLABFORM_SUMMARY:` — one line of JSON a program can parse,
+  because long project names wrapped by the console log break every scraper;
+* approval rules accept `user:`/`group:` names, resolved to ids the same way
+  `deploy_access_levels` always did.
+
+Unit tests **509 → 568**; black and mypy clean throughout; the diff-engine
+fixes were each proven by perturbation (reordered list stays idle, changed
+membership updates, five hash seeds agree).
 
 ### Evidence
 
@@ -87,7 +113,7 @@ tree: one injected fake label produced `labels changes:`, one flipped
 ### Install
 
 ```bash
-pip install "gitlabform @ git+https://gitlab.com/satorio/public/gitlabform@satorio-series-2026.08.23"
+pip install "gitlabform @ git+https://gitlab.com/satorio/public/gitlabform@satorio-series-2026.08.24"
 ```
 
 `gitlabform --version` still prints `6.2.1` — that is upstream's static version
