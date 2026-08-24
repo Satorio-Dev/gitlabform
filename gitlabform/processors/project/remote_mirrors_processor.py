@@ -1,10 +1,11 @@
 from typing import Any, cast, Dict, Set, List, Optional
-from logging import info, warning
+from logging import error, info, warning
 
 from gitlab.exceptions import GitlabCreateError, GitlabUpdateError, GitlabDeleteError
 from gitlab.v4.objects import Project, ProjectRemoteMirror
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
+from gitlabform.processors.util.failed_writes import FailedWrites
 
 
 class RemoteMirrorsProcessor(AbstractProcessor):
@@ -40,6 +41,7 @@ class RemoteMirrorsProcessor(AbstractProcessor):
 
     def __init__(self, gitlab: GitLab):
         super().__init__("remote_mirrors", gitlab)
+        self.failed_writes = FailedWrites("remote mirror changes")
 
     @staticmethod
     def _normalize_url_for_comparison(url: str) -> str:
@@ -113,6 +115,8 @@ class RemoteMirrorsProcessor(AbstractProcessor):
     def _process_configuration(self, project_and_group: str, configuration: Dict[str, Any]) -> None:
         project: Project = self.gl.get_project_by_path_cached(project_and_group)
 
+        self.failed_writes.start()
+
         # 1. PREPARATION & OPTIMIZATION
         mirrors_in_gitlab: List[ProjectRemoteMirror] = project.remote_mirrors.list(get_all=True)
         gitlab_mirrors_map: Dict[str, ProjectRemoteMirror] = {
@@ -179,6 +183,8 @@ class RemoteMirrorsProcessor(AbstractProcessor):
                     info("  " + "─" * 30)  # Visual separator using a light line
                     self._report_mirror_details(mirror)
                 info("  " + "─" * 30)
+
+        self.failed_writes.raise_if_any(project_and_group)
 
     def _handle_public_key_display(self, project: Project, mirror_obj: ProjectRemoteMirror, norm_url: str) -> None:
         """
@@ -257,7 +263,9 @@ class RemoteMirrorsProcessor(AbstractProcessor):
                         "Please remove this flag from your configuration to avoid unnecessary API calls in future runs."
                     )
             except GitlabUpdateError as e:
-                warning(f"Failed to update remote mirror {norm_url}: {e}")
+                message = f"Failed to update remote mirror {norm_url}: {e}"
+                error(message)
+                self.failed_writes.record(message)
         else:
             info(f"Remote mirror '{norm_url}' remains unchanged")
 
@@ -270,7 +278,9 @@ class RemoteMirrorsProcessor(AbstractProcessor):
         try:
             return cast(ProjectRemoteMirror, project.remote_mirrors.create(payload))
         except GitlabCreateError as e:
-            warning(f"Failed to create remote mirror {norm_url}: {e}")
+            message = f"Failed to create remote mirror {norm_url}: {e}"
+            error(message)
+            self.failed_writes.record(message)
             return None
 
     def _enforce_mirrors(self, gitlab_mirrors_map: Dict[str, ProjectRemoteMirror], urls_to_keep: Set[str]) -> None:
@@ -286,10 +296,9 @@ class RemoteMirrorsProcessor(AbstractProcessor):
         try:
             mirror.delete()
         except GitlabDeleteError as e:
-            warning(
-                f"Failed to delete remote mirror id={getattr(mirror, 'id', None)} url={getattr(mirror, 'url', None)}: {e}"
-            )
-            info(f"Failed to delete remote mirror '{mirror.url}'")
+            message = f"Failed to delete remote mirror id={getattr(mirror, 'id', None)} url={getattr(mirror, 'url', None)}: {e}"
+            error(message)
+            self.failed_writes.record(message)
 
     def _sync_remote_mirror(self, mirror: ProjectRemoteMirror) -> None:
         """Trigger sync for remote mirror when `force_push` is requested."""
@@ -301,7 +310,9 @@ class RemoteMirrorsProcessor(AbstractProcessor):
             result = mirror.sync()
             info(f"Triggered sync for remote mirror '{mirror_url}' result={result}")
         except Exception as e:
-            warning(f"Failed to trigger sync for remote mirror id={mirror_id} url={mirror_url}: {e}")
+            message = f"Failed to trigger sync for remote mirror id={mirror_id} url={mirror_url}: {e}"
+            error(message)
+            self.failed_writes.record(message)
 
     def _report_mirror_details(self, mirror: ProjectRemoteMirror) -> None:
         """Prints every attribute of the mirror object, one per line."""

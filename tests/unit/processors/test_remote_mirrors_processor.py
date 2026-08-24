@@ -1,7 +1,11 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+from gitlab.exceptions import GitlabCreateError, GitlabDeleteError, GitlabUpdateError
+
 from gitlabform.processors.project.remote_mirrors_processor import RemoteMirrorsProcessor
 from gitlabform.processors.util.difference_logger import DifferenceLogger
+from gitlabform.processors.util.failed_writes import SomeWritesFailed
 
 
 def _diff(current: dict, desired: dict) -> str:
@@ -117,3 +121,97 @@ class TestRemoteMirrorsProcessorDryRunDiff:
                 "url": "https://github.com/gitlab-org/security/gitlab.git",
             }
         }
+
+
+class TestRemoteMirrorsProcessorFailedWrites:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = RemoteMirrorsProcessor(self.gitlab)
+        self.processor.gl = MagicMock()
+        self.project = self.processor.gl.get_project_by_path_cached.return_value
+
+    @staticmethod
+    def _mirror(url, enabled=True):
+        mirror = MagicMock()
+        mirror.url = url
+        mirror.id = 101486
+        mirror.asdict.return_value = {"id": 101486, "enabled": enabled, "url": url}
+        return mirror
+
+    def test__a_create_gitlab_refuses_fails_the_node_and_the_other_mirrors_are_still_written(self):
+        self.project.remote_mirrors.list.return_value = []
+        self.project.remote_mirrors.create.side_effect = [GitlabCreateError("no", 400), MagicMock()]
+
+        with pytest.raises(SomeWritesFailed) as failure:
+            self.processor._process_configuration(
+                "foo/bar",
+                {
+                    "remote_mirrors": {
+                        "https://a.example.com/one.git": {"enabled": True},
+                        "https://b.example.com/two.git": {"enabled": True},
+                    }
+                },
+            )
+
+        assert self.project.remote_mirrors.create.call_count == 2
+        assert "a.example.com" in str(failure.value)
+        assert "b.example.com" not in str(failure.value)
+        assert "foo/bar" in str(failure.value)
+
+    def test__an_update_gitlab_refuses_fails_the_node(self):
+        url = "https://a.example.com/one.git"
+        self.project.remote_mirrors.list.return_value = [self._mirror(url, enabled=True)]
+        self.project.remote_mirrors.update.side_effect = GitlabUpdateError("no", 400)
+
+        with pytest.raises(SomeWritesFailed) as failure:
+            self.processor._process_configuration("foo/bar", {"remote_mirrors": {url: {"enabled": False}}})
+
+        assert "Failed to update remote mirror" in str(failure.value)
+
+    def test__a_delete_gitlab_refuses_fails_the_node(self):
+        url = "https://a.example.com/one.git"
+        mirror = self._mirror(url)
+        mirror.delete.side_effect = GitlabDeleteError("no", 400)
+        self.project.remote_mirrors.list.return_value = [mirror]
+
+        with pytest.raises(SomeWritesFailed) as failure:
+            self.processor._process_configuration("foo/bar", {"remote_mirrors": {url: {"delete": True}}})
+
+        assert "Failed to delete remote mirror" in str(failure.value)
+
+    def test__a_sync_gitlab_refuses_fails_the_node(self):
+        url = "https://a.example.com/one.git"
+        created = self._mirror(url)
+        created.sync.side_effect = GitlabCreateError("no", 400)
+        self.project.remote_mirrors.list.return_value = []
+        self.project.remote_mirrors.create.return_value = created
+
+        with pytest.raises(SomeWritesFailed) as failure:
+            self.processor._process_configuration(
+                "foo/bar", {"remote_mirrors": {url: {"enabled": True, "force_push": True}}}
+            )
+
+        assert "Failed to trigger sync" in str(failure.value)
+
+    def test__mirrors_gitlab_accepts_leave_the_node_green(self):
+        self.project.remote_mirrors.list.return_value = []
+
+        self.processor._process_configuration(
+            "foo/bar", {"remote_mirrors": {"https://a.example.com/one.git": {"enabled": True}}}
+        )
+
+        assert self.project.remote_mirrors.create.call_count == 1
+
+    def test__what_one_node_refused_is_not_carried_into_the_next(self):
+        self.project.remote_mirrors.list.return_value = []
+        self.project.remote_mirrors.create.side_effect = GitlabCreateError("no", 400)
+        with pytest.raises(SomeWritesFailed):
+            self.processor._process_configuration(
+                "foo/bar", {"remote_mirrors": {"https://a.example.com/one.git": {"enabled": True}}}
+            )
+
+        self.project.remote_mirrors.create.side_effect = None
+        self.processor._process_configuration(
+            "foo/baz", {"remote_mirrors": {"https://a.example.com/one.git": {"enabled": True}}}
+        )
