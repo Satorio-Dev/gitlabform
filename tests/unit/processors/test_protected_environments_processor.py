@@ -361,3 +361,68 @@ class TestProtectedEnvironmentsProcessorUpdateInPlace:
             self.processor._process_configuration("foo/bar", self._config(production=wanted))
 
         assert "deploy_access_levels" in str(failure.value)
+
+
+class TestProtectedEnvironmentsProcessorIdleState:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = ProtectedEnvironmentsProcessor(self.gitlab)
+
+    def test__an_unchanged_environment_with_approval_rules_is_not_written_at_all(self):
+        self.gitlab.list_protected_environments.return_value = [
+            {
+                "id": 7,
+                "name": "production",
+                "deploy_access_levels": [
+                    {"id": 12, "access_level": 40, "user_id": None, "group_id": None},
+                    {"id": 13, "access_level": None, "user_id": 15, "group_id": None},
+                ],
+                "approval_rules": [
+                    {"id": 3, "user_id": 15, "access_level": None, "required_approvals": 1, "group_id": None},
+                    {"id": 4, "access_level": 40, "user_id": None, "required_approvals": 2, "group_id": None},
+                ],
+            }
+        ]
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"user_id": 15}, {"access_level": 40}],
+            "approval_rules": [
+                {"access_level": 40, "required_approvals": 2},
+                {"user_id": 15, "required_approvals": 1},
+            ],
+        }
+
+        self.processor._process_configuration("foo/bar", {"protected_environments": {"production": wanted}})
+
+        assert self.gitlab.update_a_repository_environment.call_count == 0
+        assert self.gitlab.protect_a_repository_environment.call_count == 0
+        assert self.gitlab.unprotect_environment.call_count == 0
+
+    def test__a_changed_approval_rule_still_reaches_the_update_endpoint(self):
+        live = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [{"id": 12, "access_level": 40, "user_id": None, "group_id": None}],
+            "approval_rules": [{"id": 3, "user_id": 15, "access_level": None, "required_approvals": 1}],
+        }
+        read_back = {
+            "id": 7,
+            "name": "production",
+            "deploy_access_levels": [{"id": 12, "access_level": 40, "user_id": None, "group_id": None}],
+            "approval_rules": [{"id": 5, "user_id": 16, "access_level": None, "required_approvals": 1}],
+        }
+        self.gitlab.list_protected_environments.side_effect = [[live], [read_back]]
+        wanted = {
+            "name": "production",
+            "deploy_access_levels": [{"access_level": 40}],
+            "approval_rules": [{"user_id": 16, "required_approvals": 1}],
+        }
+
+        self.processor._process_configuration("foo/bar", {"protected_environments": {"production": wanted}})
+
+        assert self.gitlab.update_a_repository_environment.call_count == 1
+        assert self.gitlab.update_a_repository_environment.call_args.args[2]["approval_rules"] == [
+            {"user_id": 16, "required_approvals": 1},
+            {"id": 3, "_destroy": True},
+        ]

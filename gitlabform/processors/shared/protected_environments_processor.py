@@ -29,6 +29,7 @@ class ProtectedEnvironmentsProcessor(MultipleEntitiesProcessor):
         self.protect_method: Callable = gitlab.protect_a_repository_environment
         self.update_method: Callable = gitlab.update_a_repository_environment
         self.custom_diff_analyzers["deploy_access_levels"] = self.recursive_diff_analyzer
+        self.custom_diff_analyzers["approval_rules"] = self.recursive_diff_analyzer
         self._not_written: dict[str, list[str]] = {}
 
     KEYS_NOT_SENT_TO_GITLAB: frozenset = frozenset({"delete"})
