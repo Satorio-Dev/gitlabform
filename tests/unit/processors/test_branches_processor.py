@@ -213,7 +213,25 @@ class TestBranchesProcessor:
         )
 
         result = BranchProtection.build_patch_request_data(transformed_access_levels, existing_records)
-        # Additive Design: Omitted users should be retained, not destroyed.
+        assert result == [{"id": 18, "_destroy": True}]
+
+    def test_build_patch_request_data_keeps_the_omitted_user_when_the_branch_is_additive(self):
+        transformed_access_levels = [
+            {
+                "access_level": AccessLevel.MAINTAINER.value,
+            }
+        ]
+        existing_records = tuple(
+            [
+                {"access_level": AccessLevel.MAINTAINER.value, "id": 17},
+                {
+                    "user_id": 23,
+                    "id": 18,
+                },
+            ]
+        )
+
+        result = BranchProtection.build_patch_request_data(transformed_access_levels, existing_records, additive=True)
         assert result == []
 
 

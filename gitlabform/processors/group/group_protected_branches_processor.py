@@ -60,6 +60,11 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
         self.failed_writes.raise_if_any(group)
 
     def process_branch_protection(self, group: Group, branch_name: str, branch_config: dict):
+        """'additive' is gitlabform's own key, read here and kept out of everything that
+        goes to GitLab. See BranchProtection.build_patch_request_data for what it buys."""
+        additive = bool(branch_config.get("additive", False))
+        branch_config = {key: value for key, value in branch_config.items() if key != "additive"}
+
         protected_branch: Optional[GroupProtectedBranch] = None
 
         try:
@@ -93,6 +98,7 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
             merge_access_items_patch_data = BranchProtection.build_patch_request_data(
                 transformed_access_levels=transformed_branch_config.get("merge_access_levels"),
                 existing_records=tuple(BranchProtection.get_list_attribute(protected_branch, "merge_access_levels")),
+                additive=additive,
             )
             if len(merge_access_items_patch_data) > 0:
                 protected_branch_api_patch_data["allowed_to_merge"] = merge_access_items_patch_data
@@ -101,6 +107,7 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
             push_access_items_patch_data = BranchProtection.build_patch_request_data(
                 transformed_access_levels=transformed_branch_config.get("push_access_levels"),
                 existing_records=tuple(BranchProtection.get_list_attribute(protected_branch, "push_access_levels")),
+                additive=additive,
             )
             if len(push_access_items_patch_data) > 0:
                 protected_branch_api_patch_data["allowed_to_push"] = push_access_items_patch_data
@@ -111,6 +118,7 @@ class GroupProtectedBranchesProcessor(AbstractProcessor):
                 existing_records=tuple(
                     BranchProtection.get_list_attribute(protected_branch, "unprotect_access_levels")
                 ),
+                additive=additive,
             )
             if len(unprotect_access_items_patch_data) > 0:
                 protected_branch_api_patch_data["allowed_to_unprotect"] = unprotect_access_items_patch_data

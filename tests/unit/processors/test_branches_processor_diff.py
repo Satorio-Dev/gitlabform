@@ -96,7 +96,7 @@ class TestBranchesDiff:
 
         assert _diff(processor, {"main": {"protected": True, "code_owner_approval_required": True}}, caplog) == ""
 
-    def test_rule_gitlab_has_and_the_config_does_not_is_not_a_difference(self, caplog):
+    def test_rule_gitlab_has_and_the_config_does_not_is_reported_as_going(self, caplog):
         live = dict(PROTECTED_MAIN)
         live["push_access_levels"] = _access_levels(
             {"access_level": 40, "access_level_description": "Maintainers"},
@@ -104,7 +104,26 @@ class TestBranchesDiff:
         )
         processor = _make_processor([live])
 
-        assert _diff(processor, {"main": MAIN_CONFIG}, caplog) == ""
+        text = _diff(processor, {"main": MAIN_CONFIG}, caplog)
+
+        before, after = text.split("=>")
+        assert "967" in before
+        assert "967" not in after
+
+    def test_rule_gitlab_has_and_an_additive_branch_does_not_stays_and_is_silent(self, caplog):
+        live = dict(PROTECTED_MAIN)
+        live["push_access_levels"] = _access_levels(
+            {"access_level": 40, "access_level_description": "Maintainers"},
+            {"access_level": None, "user_id": 967, "access_level_description": "John Doe"},
+        )
+        processor = _make_processor([live])
+
+        assert _diff(processor, {"main": {**MAIN_CONFIG, "additive": True}}, caplog) == ""
+
+    def test_the_additive_key_is_not_a_difference_of_its_own(self, caplog):
+        processor = _make_processor([PROTECTED_MAIN])
+
+        assert _diff(processor, {"main": {**MAIN_CONFIG, "additive": True}}, caplog) == ""
 
     def test_rule_the_config_adds_is_reported(self, caplog):
         processor = _make_processor([PROTECTED_MAIN])

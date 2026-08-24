@@ -26,6 +26,13 @@ say that neither list was malformed - only the order they were walked in decided
     allowed_to_merge:
       - access_level: 40
       - group: leadprom/process/teams/merchanto-leads
+
+The question here is identity - which record a rule is the same rule as - and not what
+becomes of a record no rule claims. So the tests that put a rule against the whole live
+snapshot, which holds records this configuration never mentions, ask for `additive=True`:
+that was the regime in force when the 400 was observed, and it leaves the payload empty
+when every configured rule is already there. What the default regime does with the rest
+of that snapshot is test_branches_processor_exhaustive.py's subject.
 """
 
 import json
@@ -95,6 +102,7 @@ def test_role_and_group_rules_that_both_exist_produce_an_empty_patch():
     patch_data = BranchProtection.build_patch_request_data(
         transformed_access_levels=transform_config(LIVE_ALLOWED_TO_MERGE),
         existing_records=tuple(LIVE_PROTECTED_BRANCH_GET["merge_access_levels"]),
+        additive=True,
     )
 
     assert patch_data == []
@@ -129,6 +137,7 @@ def test_a_group_record_is_not_the_role_it_carries_an_access_level_for():
     patch_data = BranchProtection.build_patch_request_data(
         transformed_access_levels=transform_config([{"access_level": AccessLevel.MAINTAINER.value}]),
         existing_records=existing_records,
+        additive=True,
     )
 
     assert patch_data == [{"access_level": AccessLevel.MAINTAINER.value}]
@@ -141,6 +150,7 @@ def test_a_user_record_is_not_the_role_it_carries_an_access_level_for():
     patch_data = BranchProtection.build_patch_request_data(
         transformed_access_levels=transform_config([{"access_level": AccessLevel.MAINTAINER.value}]),
         existing_records=existing_records,
+        additive=True,
     )
 
     assert patch_data == [{"access_level": AccessLevel.MAINTAINER.value}]
@@ -172,6 +182,7 @@ def test_group_rule_listed_before_the_role_rule_in_config_matches_both_rules():
     patch_data = BranchProtection.build_patch_request_data(
         transformed_access_levels=transform_config(list(reversed(LIVE_ALLOWED_TO_MERGE))),
         existing_records=tuple(LIVE_PROTECTED_BRANCH_GET["merge_access_levels"]),
+        additive=True,
     )
 
     assert patch_data == []
@@ -189,6 +200,7 @@ def test_either_rule_on_its_own_matches_the_live_records(allowed_to_merge):
     patch_data = BranchProtection.build_patch_request_data(
         transformed_access_levels=transform_config(allowed_to_merge),
         existing_records=tuple(LIVE_PROTECTED_BRANCH_GET["merge_access_levels"]),
+        additive=True,
     )
 
     assert patch_data == []

@@ -25,8 +25,12 @@ class BranchesProcessor(AbstractProcessor):
     This processor is complex because GitLab's Protected Branches API uses different
     data structures for Create (POST), Get (GET), and Update (PATCH) operations.
 
-    It implements 'Additive Design' (existing rules are preserved) and
-    'Raw Parameter Passing' (arbitrary keys in config are sent to the API).
+    A declared access list is the whole of that list: a rule GitLab holds and the
+    configuration does not name is removed, unless the branch carries 'additive: true'.
+    A list the configuration does not declare is not touched at all.
+
+    It also implements 'Raw Parameter Passing' (arbitrary keys in config are sent to
+    the API).
     """
 
     KEYS_APPLIED_BY_ANOTHER_PROCESSOR = ("squash_option",)
@@ -132,12 +136,13 @@ class BranchesProcessor(AbstractProcessor):
                 desired_for_diff[branch_name] = wanted
                 continue
 
+            additive = self._branch_is_additive(entity_config, branch_name)
             live_view: dict = {}
             wanted_view: dict = {}
             for key, wanted_value in wanted.items():
                 live_value = live.get(key, "???")
                 if key in self.ACCESS_LEVEL_LISTS and isinstance(live_value, list):
-                    wanted_view[key] = self._projected_access_levels(live_value, wanted_value)
+                    wanted_view[key] = self._projected_access_levels(live_value, wanted_value, additive)
                 else:
                     wanted_view[key] = wanted_value
                 live_view[key] = live_value
@@ -169,11 +174,25 @@ class BranchesProcessor(AbstractProcessor):
             comparable.append({key: entry[key] for key in identity_keys if entry.get(key) is not None})
         return sorted(comparable, key=lambda rule: sorted(rule.items()) if isinstance(rule, dict) else [])
 
+    @staticmethod
+    def _branch_is_additive(entity_config, branch_name: str) -> bool:
+        """Whether the branch asks to keep what it does not declare."""
+        branch_config = entity_config.get(branch_name) if isinstance(entity_config, dict) else None
+        return isinstance(branch_config, dict) and bool(branch_config.get("additive", False))
+
     @classmethod
-    def _projected_access_levels(cls, live: list, wanted: list) -> list:
-        """What the list will hold after apply: gitlabform is additive, so every rule
-        GitLab has survives, except where it collides with a "No Access" rule - level 0
-        is mutually exclusive with any other role."""
+    def _projected_access_levels(cls, live: list, wanted: list, additive: bool) -> list:
+        """What the list will hold after apply.
+
+        A declared list is the whole of that list, so what it does not name is gone -
+        which is the one thing a dry run exists to show before it happens.
+
+        Under "additive: true" every rule GitLab has survives instead, except where it
+        collides with a "No Access" rule - level 0 is mutually exclusive with any other
+        role."""
+        if not additive:
+            return cls._comparable_access_levels(list(wanted))
+
         wanted_role_levels = {rule.get("access_level") for rule in wanted if BranchProtection.is_role_rule(rule)}
         no_access_wanted = 0 in wanted_role_levels
         roles_wanted = any(level for level in wanted_role_levels if level)
@@ -234,7 +253,13 @@ class BranchesProcessor(AbstractProcessor):
         3. Handles 'protected: true':
            - If not currently protected: Create protection.
            - If protected: Update using PATCH (EE > 15.6) or Unprotect/Reprotect (CE/Old EE).
+
+        'additive' is gitlabform's own key, read here and kept out of everything that
+        goes to GitLab.
         """
+        additive = bool(branch_config.get("additive", False))
+        branch_config = {key: value for key, value in branch_config.items() if key != "additive"}
+
         protected_branch: Optional[ProjectProtectedBranch] = None
 
         # If protected branch name contains a supported wildcard do not try looking it up
@@ -268,7 +293,7 @@ class BranchesProcessor(AbstractProcessor):
             # defined configuration
             if self.gitlab.is_version_less_than("15.6.0") or (self.gitlab.enterprise == False):
                 self.process_branch_config_gitlab_under_15_6_0_or_ce(
-                    branch_config, branch_name, project, protected_branch
+                    branch_config, branch_name, project, protected_branch, additive
                 )
                 return
 
@@ -306,6 +331,7 @@ class BranchesProcessor(AbstractProcessor):
             merge_access_items_patch_data = BranchProtection.build_patch_request_data(
                 transformed_access_levels=transformed_branch_config.get("merge_access_levels"),
                 existing_records=tuple(BranchProtection.get_list_attribute(protected_branch, "merge_access_levels")),
+                additive=additive,
             )
             if len(merge_access_items_patch_data) > 0:
                 protected_branch_api_patch_data["allowed_to_merge"] = merge_access_items_patch_data
@@ -314,6 +340,7 @@ class BranchesProcessor(AbstractProcessor):
             push_access_items_patch_data = BranchProtection.build_patch_request_data(
                 transformed_access_levels=transformed_branch_config.get("push_access_levels"),
                 existing_records=tuple(BranchProtection.get_list_attribute(protected_branch, "push_access_levels")),
+                additive=additive,
             )
             if len(push_access_items_patch_data) > 0:
                 protected_branch_api_patch_data["allowed_to_push"] = push_access_items_patch_data
@@ -325,6 +352,7 @@ class BranchesProcessor(AbstractProcessor):
                 existing_records=tuple(
                     BranchProtection.get_list_attribute(protected_branch, "unprotect_access_levels")
                 ),
+                additive=additive,
             )
 
             if len(unprotect_access_items_patch_data) > 0:
@@ -339,7 +367,9 @@ class BranchesProcessor(AbstractProcessor):
             info(f"Removing branch protection for {branch_name}")
             self.unprotect_branch(protected_branch)
 
-    def process_branch_config_gitlab_under_15_6_0_or_ce(self, branch_config, branch_name, project, protected_branch):
+    def process_branch_config_gitlab_under_15_6_0_or_ce(
+        self, branch_config, branch_name, project, protected_branch, additive: bool = False
+    ):
         """
         Processes the branches configuration for gitlab version <=15.6.0 or Community Edition,
         where in-place updates (PATCH) are not supported or effective.
@@ -352,8 +382,10 @@ class BranchesProcessor(AbstractProcessor):
         # POST: https://docs.gitlab.com/api/protected_branches/#protect-repository-branches
         # Therefore we first transform the configured YAML into a state matching the gitlab GET endpoint,
         # before checking if it needs_update
-        if self._needs_update(
-            protected_branch.attributes, BranchProtection.map_config_to_protected_branch_get_data(branch_config)
+        transformed_branch_config = BranchProtection.map_config_to_protected_branch_get_data(branch_config)
+
+        if self._needs_update(protected_branch.attributes, transformed_branch_config) or self._holds_undeclared_rules(
+            protected_branch, transformed_branch_config, additive
         ):
             info(
                 f"Gitlab version is less than 15.6.0, so un-protecting and reprotecting branch {branch_name} to apply new config..."
@@ -362,6 +394,28 @@ class BranchesProcessor(AbstractProcessor):
 
             # Send the untransformed config to the POST endpoint, as GitlabForm YAML structure conforms to the POST inputs
             self.protect_branch(project, branch_name, branch_config, False)
+
+    @staticmethod
+    def _holds_undeclared_rules(protected_branch, transformed_branch_config: dict, additive: bool) -> bool:
+        """Whether GitLab holds a rule of a declared access list that the configuration
+        does not name.
+
+        _needs_update only looks for what the configuration asks for and GitLab lacks, so
+        without this an undeclared rule would survive the reprotect path while the PATCH
+        path removes it, and the same configuration would mean two different things on
+        two GitLab editions."""
+        if additive:
+            return False
+
+        for key in BranchesProcessor.ACCESS_LEVEL_LISTS:
+            patch_data = BranchProtection.build_patch_request_data(
+                transformed_access_levels=transformed_branch_config.get(key),
+                existing_records=tuple(BranchProtection.get_list_attribute(protected_branch, key)),
+            )
+            if any(entry.get("_destroy") for entry in patch_data):
+                return True
+
+        return False
 
     def protect_branch(self, project: Project, branch_name: str, branch_config: dict, update_only: bool = False):
         """

@@ -105,6 +105,50 @@ projects_and_groups:
         allow_force_push: true
 ```
 
+### What a declared access list means
+
+A `push_access_level`, `merge_access_level`, `unprotect_access_level`,
+`allowed_to_push`, `allowed_to_merge` or `allowed_to_unprotect` you declare is the
+**whole** of that list. A rule GitLab holds that the configuration does not name is
+removed, so that reading the configuration is enough to know who may push to, merge
+into or unprotect the branch.
+
+A list you do **not** declare is a different matter: GitLabForm sends nothing for it
+and GitLab keeps whatever it holds. Declaring `merge_access_level` says nothing about
+who may push.
+
+!!! warning
+
+    This differs from upstream GitLabForm, which is additive and never removes an
+    access level rule it did not put there. If you are moving a configuration over,
+    run `--noop` first: the dry run shows each list as it will be after apply, so a
+    rule about to go is one that appears on the left of `=>` and not on the right.
+
+To keep the upstream behaviour for a branch, give it `additive: true`. Only a "No
+Access" rule then removes anything, because level 0 cannot stand beside any other
+role:
+
+```yaml
+projects_and_groups:
+  group_1/project_1:
+    branches:
+      # this list is the whole truth about who may merge into main
+      main:
+        protected: true
+        allowed_to_merge:
+          - access_level: maintainer
+          - group: group_1/reviewers
+      # whatever else GitLab holds for this branch stays
+      legacy:
+        protected: true
+        additive: true
+        allowed_to_merge:
+          - access_level: maintainer
+```
+
+`additive` is GitLabForm's own key. It is never sent to GitLab and never appears in a
+diff of its own.
+
 ### Squash option
 
 Each branch may also carry a `squash_option` key. It sets the *per-branch* squash
