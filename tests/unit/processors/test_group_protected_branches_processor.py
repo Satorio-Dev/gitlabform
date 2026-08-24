@@ -200,6 +200,96 @@ class TestGroupProtectedBranchesProcessor:
         group.protectedbranches.update.assert_not_called()
         group.protectedbranches.create.assert_not_called()
 
+    def test_process_branch_protection_removes_an_undeclared_role_rule(self):
+        protected_branch = MagicMock()
+        protected_branch.attributes = {
+            "push_access_levels": [],
+            "merge_access_levels": [
+                {"access_level": 30, "user_id": None, "group_id": None, "deploy_key_id": None, "id": 2},
+                {"access_level": 40, "user_id": None, "group_id": None, "deploy_key_id": None, "id": 3},
+            ],
+            "unprotect_access_levels": [],
+        }
+
+        group = MagicMock()
+        group.protectedbranches.get.return_value = protected_branch
+
+        branch_config = {
+            "protected": True,
+            "merge_access_level": 40,
+        }
+
+        self.processor.process_branch_protection(group, "main", branch_config)
+
+        group.protectedbranches.update.assert_called_once()
+        call_args = group.protectedbranches.update.call_args
+        assert call_args[0][1]["allowed_to_merge"] == [{"id": 2, "_destroy": True}]
+
+    def test_process_branch_protection_additive_branch_keeps_the_undeclared_role_rule(self):
+        protected_branch = MagicMock()
+        protected_branch.attributes = {
+            "push_access_levels": [],
+            "merge_access_levels": [
+                {"access_level": 30, "user_id": None, "group_id": None, "deploy_key_id": None, "id": 2},
+                {"access_level": 40, "user_id": None, "group_id": None, "deploy_key_id": None, "id": 3},
+            ],
+            "unprotect_access_levels": [],
+        }
+
+        group = MagicMock()
+        group.protectedbranches.get.return_value = protected_branch
+
+        branch_config = {
+            "protected": True,
+            "additive": True,
+            "merge_access_level": 40,
+        }
+
+        self.processor.process_branch_protection(group, "main", branch_config)
+
+        group.protectedbranches.update.assert_not_called()
+        group.protectedbranches.create.assert_not_called()
+
+    def test_process_branch_protection_the_additive_key_is_never_sent(self):
+        protected_branch = MagicMock()
+        protected_branch.attributes = {
+            "push_access_levels": [],
+            "merge_access_levels": [
+                {"access_level": 40, "user_id": None, "group_id": None, "deploy_key_id": None, "id": 2}
+            ],
+            "unprotect_access_levels": [],
+        }
+
+        group = MagicMock()
+        group.protectedbranches.get.return_value = protected_branch
+
+        branch_config = {
+            "protected": True,
+            "additive": True,
+            "merge_access_level": 30,
+        }
+
+        self.processor.process_branch_protection(group, "main", branch_config)
+
+        group.protectedbranches.update.assert_called_once()
+        call_args = group.protectedbranches.update.call_args
+        assert call_args[0][1] == {"allowed_to_merge": [{"access_level": 30}]}
+
+    def test_process_branch_protection_the_additive_key_is_never_sent_when_the_branch_is_created_either(self):
+        group = MagicMock()
+        group.protectedbranches.get.side_effect = GitlabGetError("not found", 404)
+
+        branch_config = {
+            "protected": True,
+            "additive": True,
+            "merge_access_level": 40,
+        }
+
+        self.processor.process_branch_protection(group, "main", branch_config)
+
+        group.protectedbranches.create.assert_called_once()
+        assert "additive" not in group.protectedbranches.create.call_args[0][0]
+
     def test_process_branch_protection_unprotect(self):
         protected_branch = MagicMock()
         group = MagicMock()

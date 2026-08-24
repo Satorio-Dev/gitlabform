@@ -21,6 +21,11 @@ This section purpose is to manage the [group-level protected branches](https://d
 
     Group protected branches only support access levels. Individual users and groups cannot be specified. (This is a GitLab API limitation).
 
+A declared access list means the same here as in the project-level section: it is the
+**whole** of that list, and a rule GitLab holds that the configuration does not name is
+removed. `additive: true` on a branch keeps the upstream behaviour. See
+[What a declared access list means](#what-a-declared-access-list-means).
+
 Example:
 
 ```yaml
