@@ -1,5 +1,8 @@
+import sys
+from logging import critical
 from typing import Any
 
+from gitlabform.constants import EXIT_INVALID_INPUT
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.defining_keys import Key, And
 from gitlabform.processors.multiple_entities_processor import MultipleEntitiesProcessor
@@ -37,11 +40,46 @@ class MergeRequestsApprovalRules(MultipleEntitiesProcessor):
         }
 
     def _get_desired_state(self, entity_config: dict) -> dict[str, dict[str, Any]]:
+        self._refuse_branches_declared_both_ways(entity_config)
         return {
             rule["name"]: dict(sorted(self._normalize_rule_from_config(rule).items()))
             for alias, rule in entity_config.items()
             if alias != "enforce" and isinstance(rule, dict)
         }
+
+    def _can_proceed(self, project_or_group: str, configuration: dict) -> bool:
+        self._refuse_branches_declared_both_ways(configuration[self.configuration_name])
+        return True
+
+    def _refuse_branches_declared_both_ways(self, entity_config: dict) -> None:
+        """Stop on a rule that names its branches as names and as ids at once.
+
+        The two keys answer the same question, and nothing makes them answer it the
+        same way: `protected_branches: [main]` beside `protected_branch_ids: [7]` is
+        two scopings of one rule. The write path resolves the names and would send
+        those, so the ids would be dropped without a word - the config would say one
+        thing and the project end up with the other.
+
+        Both are named here and neither is applied, on the apply path and in the diff
+        alike, so that the run stops where the ambiguity is rather than at whatever it
+        would have written.
+        """
+        declared_both_ways = sorted(
+            alias
+            for alias, rule in entity_config.items()
+            if alias != "enforce"
+            and isinstance(rule, dict)
+            and "protected_branches" in rule
+            and "protected_branch_ids" in rule
+        )
+        if declared_both_ways:
+            critical(
+                f"Rule(s) {', '.join(declared_both_ways)} of {self.configuration_name} declare their branches"
+                f" both as 'protected_branches' (names) and as 'protected_branch_ids' (ids)."
+                f" These are two answers to the same question and only the names would be written."
+                f" Please declare the branches of each rule one way or the other."
+            )
+            sys.exit(EXIT_INVALID_INPUT)
 
     @staticmethod
     def _normalize_rule_from_gitlab(entity_in_gitlab: dict) -> dict:

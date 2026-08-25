@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from gitlabform.constants import EXIT_INVALID_INPUT
 from gitlabform.processors.project.merge_requests_approval_rules import MergeRequestsApprovalRules
 
 
@@ -245,3 +248,58 @@ class TestMergeRequestsApprovalRulesDryRunDiff:
 
         assert "legacy" in text
         assert "(will be removed by enforce)" in text
+
+
+class TestMergeRequestsApprovalRulesAmbiguousBranches:
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = MergeRequestsApprovalRules(self.gitlab)
+
+    @staticmethod
+    def _both_ways():
+        return {
+            "enforce": True,
+            "release": {
+                "name": "Release Approve",
+                "approvals_required": 1,
+                "protected_branches": ["main"],
+                "protected_branch_ids": [231211600],
+            },
+        }
+
+    @staticmethod
+    def _one_way():
+        return {
+            "enforce": True,
+            "release": {
+                "name": "Release Approve",
+                "approvals_required": 1,
+                "protected_branches": ["main"],
+            },
+        }
+
+    def test__the_diff_stops_on_a_rule_that_declares_branches_both_ways(self):
+        with pytest.raises(SystemExit) as exit_info:
+            self.processor._get_desired_state(self._both_ways())
+
+        assert exit_info.value.code == EXIT_INVALID_INPUT
+
+    def test__the_apply_path_stops_on_a_rule_that_declares_branches_both_ways(self):
+        with pytest.raises(SystemExit) as exit_info:
+            self.processor._can_proceed("foo/bar", {"merge_requests_approval_rules": self._both_ways()})
+
+        assert exit_info.value.code == EXIT_INVALID_INPUT
+
+    def test__both_keys_and_the_rule_are_named_in_the_message(self, caplog):
+        with caplog.at_level("CRITICAL"), pytest.raises(SystemExit):
+            self.processor._get_desired_state(self._both_ways())
+
+        message = "\n".join(record.message for record in caplog.records)
+        assert "release" in message
+        assert "protected_branches" in message
+        assert "protected_branch_ids" in message
+
+    def test__a_rule_that_declares_branches_one_way_proceeds(self):
+        assert self.processor._can_proceed("foo/bar", {"merge_requests_approval_rules": self._one_way()}) is True
+        assert "Release Approve" in self.processor._get_desired_state(self._one_way())
