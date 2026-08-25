@@ -2,7 +2,7 @@
 
 A fork of [gitlabform/gitlabform](https://github.com/gitlabform/gitlabform),
 branched at upstream `9ab386c` (*refactor(processors): centralize dry-run diff in
-AbstractProcessor*, #1353). Twenty-four commits on `satorio-series`. The upstream
+AbstractProcessor*, #1353). Thirty-four commits on `satorio-series`. The upstream
 README is kept below, unchanged.
 
 ## About this fork
@@ -70,6 +70,46 @@ Unit tests **509 → 568**; black and mypy clean throughout; the diff-engine
 fixes were each proven by perturbation (reordered list stays idle, changed
 membership updates, five hash seeds agree).
 
+### The convergence wave
+
+Three more commits come from the same tenant a day after it converged. The tree
+needed nothing, and the plan still printed pages of change. Not one of those
+lines was a change: each was the diff reading something the apply path does not
+read.
+
+* **An access record is the rule it matches.** GitLab returns the record of a
+  rule granted to a user or a group with an access_level of its own beside the
+  id, and a protected environment's deploy access level with the description it
+  composed and the inheritance type it defaulted to. The matcher reads none of
+  that; the printer read all of it. Both now go through one `align_entries`,
+  which pairs the two sides with the section's own matcher and renders a paired
+  record as the keys its counterpart declares. A record no configured entry
+  claims is still printed whole - there the difference is real.
+* **A label an ancestor group provides is not a change.** The engine already
+  knew it would create nothing there and carried the label into the diff wearing
+  a marker saying so. A marker is still a line. It leaves the diff and is said
+  once, in a line of its own.
+* **A setting GitLab never reports back is not a difference.**
+  `prevent_sharing_groups_outside_hierarchy` and `enabled_git_access_protocol`
+  are taken for any group and returned only for a top-level one - measured on
+  gitlab.com 19.4 on 2026-08-25, the group `leadprom` carries both and its
+  subgroup `leadprom/process/gates` carries neither. They leave the diff exactly
+  where GitLab holds no answer, and are diffed like any other setting where it
+  does. The apply path is untouched: sending them is the only way a value ever
+  gets there.
+
+Measured on three control nodes of that tenant, `--noop --diff-only-changed`,
+before and after: a group `leadprom/process/gates/merchanto-core-po-qa` **40 → 1**
+lines (37 inherited labels, 2 write-only settings, and one true difference that
+stays), a project `leadprom/retryal/web/sites/finandos` **3 → 0**, a project
+`leadprom/merchanto/chargeback/adyen` **3 → 0**. The one surviving line is a
+group access token the config declares and GitLab does not have - a difference,
+which is what a plan is for. Unit tests **607 → 630**, black and mypy clean at
+each of the three steps (621, 624, 630), each fix proven by perturbation:
+un-align the printer and the two silent readings go loud; put the label marker
+back and four assertions fail; empty the write-only frozenset, or apply it where
+GitLab does report the key, and each direction fails on its own.
+
 ### Evidence
 
 Unit tests **244 → 509**. Each of the thirteen steps was checked with the
@@ -90,6 +130,12 @@ The end state, measured live: a clean dry run over 57 projects and 13 groups,
 exit 0, **not one diff line**, repeated independently. Hearing intact on the same
 tree: one injected fake label produced `labels changes:`, one flipped
 `keep_bots` produced two `(will be removed by enforce)`.
+
+That measurement is of that tree on that day, and it did not stay true. The same
+build over a tenant that had since grown user and group access rules, inherited
+labels and subgroups printed change on nodes that needed none - which is what
+the convergence wave above is, and why an empty plan is a claim worth
+re-measuring rather than a property once earned.
 
 ### What is *not* measured, said plainly
 
