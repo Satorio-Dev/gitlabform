@@ -40,13 +40,19 @@ class LabelsProcessor:
             if key != "enforce" and isinstance(label, dict)
         }
 
-    PROVIDED_BY_AN_ANCESTOR = "(provided by an ancestor group - will not be created)"
+    PROVIDED_BY_AN_ANCESTOR = "provided by an ancestor group - will not be created here"
 
-    def mark_labels_an_ancestor_provides(
+    def drop_labels_an_ancestor_provides(
         self, current: Dict[str, Dict], desired: Dict[str, Dict], group_or_project: Group | Project
     ) -> Dict:
-        """Replace the wanted state of every configured label that this project/group
-        does not own and cannot be given, because an ancestor group already has it.
+        """Leave out of the diff every configured label that this project/group does not
+        own and will not be given, because an ancestor group already has it.
+
+        The apply path says so and creates nothing, so counting one as a change leaves an
+        already converged tree announcing the same non-event on every run - 37 of them in
+        one live subgroup - and a plan that is never empty is a plan nobody reads. They
+        are named once instead, in a line of their own, so that leaving them out of the
+        diff is not the same as saying nothing about them.
 
         Matched by name, which is how both sides of this diff are keyed.
         """
@@ -55,10 +61,15 @@ class LabelsProcessor:
             return desired
 
         inherited = {label.name for label in group_or_project.labels.list(get_all=True)}
-        return {
-            name: (self.PROVIDED_BY_AN_ANCESTOR if name in missing and name in inherited else wanted)
-            for name, wanted in desired.items()
-        }
+        provided = sorted(name for name in missing if name in inherited)
+        if not provided:
+            return desired
+
+        info(
+            f"Left out of the diff - {len(provided)} configured label(s) {self.PROVIDED_BY_AN_ANCESTOR}:"
+            f" {', '.join(provided)}."
+        )
+        return {name: wanted for name, wanted in desired.items() if name not in provided}
 
     def _label_for_diff(self, label: Dict) -> Dict:
         return {k: label[k] for k in self.DIFF_KEYS if label.get(k) is not None}

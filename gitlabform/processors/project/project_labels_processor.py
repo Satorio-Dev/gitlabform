@@ -23,7 +23,7 @@ class ProjectLabelsProcessor(AbstractProcessor):
         return self._labels_processor.get_desired_labels_for_diff(entity_config)
 
     def _reconcile_with_apply(self, project_and_group: str, current: Dict, desired: Dict, entity_config) -> Dict:
-        return self._labels_processor.mark_labels_an_ancestor_provides(
+        return self._labels_processor.drop_labels_an_ancestor_provides(
             current, desired, self.gl.get_project_by_path_cached(project_and_group)
         )
 

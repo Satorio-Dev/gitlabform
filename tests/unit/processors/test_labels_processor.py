@@ -214,15 +214,29 @@ class TestLabelAnAncestorProvides:
             self.processor._print_diff("group/project", configured_labels, diff_only_changed=True)
         return "\n".join(r.message for r in caplog.records if "labels changes" in r.message)
 
-    def test_a_label_the_ancestor_owns_is_not_announced_as_a_creation(self, caplog):
+    def test_a_label_the_ancestor_owns_is_no_part_of_the_diff(self, caplog):
         ancestors_label = _group_label("goal::v1-creditron")
         self._gitlab_has(own_labels=[], inherited_labels=[ancestors_label])
 
-        diff = self._diff({"goal::v1-creditron": {"color": "#428bca"}}, caplog)
+        assert self._diff({"goal::v1-creditron": {"color": "#428bca"}}, caplog) == ""
 
-        assert "goal::v1-creditron" in diff
-        assert "(provided by an ancestor group - will not be created)" in diff
-        assert "#428bca" not in diff
+    def test_a_label_the_ancestor_owns_is_named_in_a_line_of_its_own(self, caplog):
+        ancestors_label = _group_label("goal::v1-creditron")
+        self._gitlab_has(own_labels=[], inherited_labels=[ancestors_label])
+
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("group/project", {"goal::v1-creditron": {"color": "#428bca"}}, True)
+
+        said = [r.message for r in caplog.records if "provided by an ancestor group" in r.message]
+        assert len(said) == 1
+        assert "goal::v1-creditron" in said[0]
+        assert "labels changes" not in said[0]
+
+    def test_a_tree_whose_labels_all_come_from_an_ancestor_has_nothing_to_show(self, caplog):
+        names = [f"type::{index}" for index in range(37)]
+        self._gitlab_has(own_labels=[], inherited_labels=[_group_label(name) for name in names])
+
+        assert self._diff({name: {"color": "#428bca"} for name in names}, caplog) == ""
 
     def test_a_label_nobody_has_is_still_announced_as_a_creation(self, caplog):
         self._gitlab_has(own_labels=[], inherited_labels=[])
@@ -269,3 +283,15 @@ class TestGroupLabelsAncestorGuardIsANoOp:
         assert "bug" in diff
         assert "#d9534f" in diff
         assert "provided by an ancestor group" not in diff
+
+    def test_a_label_an_ancestor_group_provides_is_no_part_of_the_group_diff(self, caplog):
+        def labels_list(get_all=True, include_ancestor_groups=True):
+            return [] if include_ancestor_groups is False else [_group_api_label("arch::ratified")]
+
+        self.group.labels.list.side_effect = labels_list
+
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("some/group", {"arch::ratified": {"color": "#428bca"}}, diff_only_changed=True)
+
+        assert [r for r in caplog.records if "group_labels changes" in r.message] == []
+        assert [r for r in caplog.records if "provided by an ancestor group" in r.message] != []

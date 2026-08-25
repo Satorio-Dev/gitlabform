@@ -24,7 +24,7 @@ class GroupLabelsProcessor(AbstractProcessor):
         return self._labels_processor.get_desired_labels_for_diff(entity_config)
 
     def _reconcile_with_apply(self, group_path_and_name: str, current: Dict, desired: Dict, entity_config) -> Dict:
-        return self._labels_processor.mark_labels_an_ancestor_provides(
+        return self._labels_processor.drop_labels_an_ancestor_provides(
             current, desired, self.gl.get_group_by_path_cached(group_path_and_name)
         )
 
