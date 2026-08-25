@@ -29,11 +29,25 @@ Under each key the contents are as documented at GitLab's [project-level Merge R
 
 ...instead of the built-in keys `user_ids`, `group_ids`, `protected_branch_ids` which require you to provide the internal ids of these entities. 
 
+A wildcard branch name, like `release/*`, is the name of the protected branch entry itself and is resolved like any other.
+
+!!! warning
+
+    Name the approvers and the branches of a rule one way or the other. A rule carrying `users` beside `user_ids`,
+    `groups` beside `group_ids`, or `protected_branches` beside `protected_branch_ids` gives two answers to one
+    question. GitLabForm stops with exit code 1 and names that rule rather than choosing one of the two for you.
+
 !!! warning
 
     If any of the users or groups is not a member of the project, they cannot be approvers.
     However GitLab will NOT fail with an error in such case - it's will silently ignore these users and groups.
     This is GitLab's limitation, not GitLabForm's.
+
+!!! note
+
+    `enforce: true` applies to the whole section: every rule of the project that the config does not define is
+    deleted, the default "All Members" rule included. There is no per-rule exception - to keep a rule GitLabForm
+    does not manage, either define it here as well or leave `enforce` out.
 
 ## Examples
 
