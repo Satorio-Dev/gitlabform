@@ -11,8 +11,41 @@ class GroupSettingsProcessor(AbstractProcessor):
     def __init__(self, gitlab: GitLab):
         super().__init__("group_settings", gitlab)
 
+    WRITE_ONLY_KEYS: frozenset = frozenset(
+        {
+            "prevent_sharing_groups_outside_hierarchy",
+            "enabled_git_access_protocol",
+        }
+    )
+
     def _get_current_state(self, group_path: str) -> Dict:
         return self.gl.get_group_by_path_cached(group_path).asdict()
+
+    def _reconcile_with_apply(self, group_path: str, current: Dict, desired: Dict, entity_config) -> Dict:
+        """Leave out of the diff the settings GitLab takes and does not report back.
+
+        GitLab accepts both keys of WRITE_ONLY_KEYS for any group and answers GET with
+        them only for a top-level one. Measured on gitlab.com 19.4 on 2026-08-25: the
+        group 'leadprom' carries both in its body, its subgroup 'leadprom/process/gates'
+        carries neither. Read as an ordinary key, an absent one reads as "it is not set
+        yet", and a converged subgroup is announced as changing on every run.
+
+        It does not follow that they never change. GitLab holds no answer either way, so
+        the diff has nothing to compare and says so once instead of guessing every run.
+        The apply path is untouched: it sends them as it always did, because sending
+        them is the only way a value ever gets there. Where GitLab does report a key -
+        a top-level group - it is diffed like any other.
+        """
+        unreported = sorted(key for key in self.WRITE_ONLY_KEYS if key in desired and key not in current)
+        if not unreported:
+            return desired
+
+        info(
+            f"Left out of the diff - GitLab does not report {', '.join(unreported)} of {group_path} back,"
+            f" so there is nothing here to compare the configured value against."
+            f" The apply path sends them either way."
+        )
+        return {key: value for key, value in desired.items() if key not in unreported}
 
     def _process_configuration(self, group: str, configuration: Dict):
         configured_group_settings = configuration.get("group_settings", {})

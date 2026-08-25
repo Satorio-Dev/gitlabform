@@ -210,7 +210,9 @@ class AbstractProcessor(ABC):
 
         Override wherever the apply path skips an entity for a reason only that path can
         see - a directive elsewhere in the config, or a state of GitLab that
-        _get_desired_state() is never handed. The default changes nothing.
+        _get_desired_state() is never handed - and wherever the current state holds no
+        answer to a key the config declares, so that there is nothing to compare rather
+        than a difference. The default changes nothing.
         """
         return desired
 
