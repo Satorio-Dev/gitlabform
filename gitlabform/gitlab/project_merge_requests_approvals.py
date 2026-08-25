@@ -46,18 +46,27 @@ class GitLabProjectMergeRequestsApprovals(GitLabCore):
         rule_in_gitlab,
         rule_in_config,
     ):
+        """Write the rule as the config declares it.
+
+        A rule that names no approvers and no branches means an empty list rather than
+        "leave whatever is there", which is why the empty lists are filled in here -
+        GitLab reads an omitted list as "do not change it".
+
+        The branches are named either as `protected_branches`, which are names to be
+        resolved against this project, or as `protected_branch_ids`, which are already
+        ids. A config that speaks the second is answering the same question, so it is
+        sent as it stands; only a config that names neither is asking for them cleared.
+        """
         pid = self._get_project_id(project_and_group_name)
         approval_rule_id = rule_in_gitlab["id"]
 
-        # GitLab interprets not passing any of these lists as "do not change them"
-        # while what we really what is in this case is "clear them"
         if "user_ids" not in rule_in_config:
             rule_in_config["user_ids"] = []
         if "group_ids" not in rule_in_config:
             rule_in_config["group_ids"] = []
         if "protected_branches" in rule_in_config:
             self._transform_protected_branches(rule_in_config, project_and_group_name)
-        else:
+        elif "protected_branch_ids" not in rule_in_config:
             rule_in_config["protected_branch_ids"] = []
 
         self._make_requests_to_api(
