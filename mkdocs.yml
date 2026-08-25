@@ -17,6 +17,7 @@ nav:
       - CI/CD Variables: reference/ci_cd_variables.md
       - CI/CD Job Token Scope: reference/job_token_scope.md
       - Deploy Keys: reference/deploy_keys.md
+      - Deploy freezes: reference/freeze_periods.md
       - Files: reference/files.md
       - Group LDAP links: reference/group_ldap_links.md
       - Group SAML links: reference/group_saml_links.md

@@ -11,6 +11,9 @@ from gitlabform.processors.project.branch_squash_option_processor import (
 from gitlabform.processors.project.branches_processor import BranchesProcessor
 from gitlabform.processors.project.deploy_keys_processor import DeployKeysProcessor
 from gitlabform.processors.project.files_processor import FilesProcessor
+from gitlabform.processors.project.freeze_periods_processor import (
+    FreezePeriodsProcessor,
+)
 from gitlabform.processors.project.hooks_processor import HooksProcessor
 from gitlabform.processors.project.integrations_processor import IntegrationsProcessor
 from gitlabform.processors.project.job_token_scope_processor import (
@@ -79,6 +82,7 @@ class ProjectProcessors(AbstractProcessors):
             FilesProcessor(gitlab, config, strict),
             HooksProcessor(gitlab),
             SchedulesProcessor(gitlab),
+            FreezePeriodsProcessor(gitlab),
             BadgesProcessor(gitlab),
             ResourceGroupsProcessor(gitlab),
             ProtectedEnvironmentsProcessor(gitlab),

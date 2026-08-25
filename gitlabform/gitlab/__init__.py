@@ -13,6 +13,7 @@ from gitlabform.gitlab.merge_requests import GitLabMergeRequests
 from gitlabform.gitlab.pipelines import GitLabPipelines
 from gitlabform.gitlab.project_badges import GitLabProjectBadges
 from gitlabform.gitlab.project_deploy_keys import GitLabProjectDeployKeys
+from gitlabform.gitlab.project_freeze_periods import GitLabProjectFreezePeriods
 from gitlabform.gitlab.project_protected_environments import (
     GitLabProjectProtectedEnvironments,
 )
@@ -57,6 +58,7 @@ class GitLab(
     GitLabPipelines,
     GitLabProjectBadges,
     GitLabProjectDeployKeys,
+    GitLabProjectFreezePeriods,
     GitLabProjectProtectedEnvironments,
     GitLabProjectMergeRequestsApprovals,
 ):
