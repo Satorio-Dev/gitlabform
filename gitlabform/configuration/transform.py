@@ -21,6 +21,29 @@ from gitlabform.gitlab import GitLab
 # on user ids. Therefore, one of the transformers changes "user_id: <number>" into "user: <username>".
 
 
+def refuse_approvers_named_both_ways(rule: dict, by_name: str, by_id: str) -> None:
+    """Stop on an approval rule that names its approvers by name and by id at once.
+
+    The two keys answer the same question, and nothing makes two answers agree. The
+    transformers resolve the names and write the result over whatever `by_id` held, so
+    the ids declared in the config would go nowhere and say nothing about it.
+
+    Both are named here and neither is resolved, so the run stops where the ambiguity
+    is rather than at whatever it would have written.
+    """
+    if by_id not in rule:
+        return
+
+    rule_name = rule.get("name", "one of the rules")
+    critical(
+        f"Rule '{rule_name}' of merge_requests_approval_rules names its approvers"
+        f" both as '{by_name}' (names) and as '{by_id}' (ids)."
+        f" These are two answers to the same question and only the names would be used."
+        f" Please name the approvers of each rule one way or the other."
+    )
+    sys.exit(EXIT_INVALID_INPUT)
+
+
 class ConfigurationTransformers:
     def __init__(self, gitlab: GitLab, log_level: int):
         self.user_transformer = UserTransformer(gitlab)
@@ -104,6 +127,7 @@ class UserTransformer(ConfigurationTransformer):
                 "**.merge_requests_approval_rules.*.users",
                 mustexist=True,
             ):
+                refuse_approvers_named_both_ways(node_coordinate.parent, "users", "user_ids")
                 user_ids = []
                 users = node_coordinate.parent.pop("users")
                 for user in users:
@@ -153,6 +177,7 @@ class GroupTransformer(ConfigurationTransformer):
                 "**.merge_requests_approval_rules.*.groups",
                 mustexist=True,
             ):
+                refuse_approvers_named_both_ways(node_coordinate.parent, "groups", "group_ids")
                 group_ids = []
                 groups = node_coordinate.parent.pop("groups")
                 for group in groups:
