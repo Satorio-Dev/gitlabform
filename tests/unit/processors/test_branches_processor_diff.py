@@ -197,7 +197,7 @@ class TestBranchesDiffReadsAccessListsLikeTheApplyPath:
 
     @staticmethod
     def _config_with(*allowed_to_merge) -> dict:
-        config = {key: value for key, value in MAIN_CONFIG.items() if key != "merge_access_level"}
+        config: dict = {key: value for key, value in MAIN_CONFIG.items() if key != "merge_access_level"}
         config["allowed_to_merge"] = list(allowed_to_merge)
         return config
 
