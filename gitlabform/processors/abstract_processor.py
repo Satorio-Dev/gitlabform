@@ -10,7 +10,7 @@ from gitlabform.gitlab import GitlabWrapper
 from gitlabform.output import EffectiveConfigurationFile
 from gitlabform.run_summary import run_summary
 from gitlabform.processors.util.decorators import configuration_to_safe_dict
-from gitlabform.processors.util.entity_matching import pair_entries
+from gitlabform.processors.util.entity_matching import align_entries, pair_entries
 from gitlabform.processors.util.difference_logger import (
     DifferenceLogger,
     NOTHING_TO_DELETE,
@@ -139,8 +139,7 @@ class AbstractProcessor(ABC):
     diff_honours_delete_flag: bool = False
     diff_delete_of_absent_entity_is_noop: bool = True
 
-    @staticmethod
-    def _keep_only_declared_keys(current: dict, desired: dict) -> dict:
+    def _keep_only_declared_keys(self, current: dict, desired: dict) -> dict:
         """Drop from each entity of the current state the keys its counterpart in the
         desired state does not declare. Entities the config does not mention are left
         whole - the removal side of the diff reports them in full."""
@@ -148,10 +147,33 @@ class AbstractProcessor(ABC):
         for identity, state in current.items():
             wanted = desired.get(identity)
             if isinstance(state, dict) and isinstance(wanted, dict):
-                comparable[identity] = {key: value for key, value in state.items() if key in wanted}
+                comparable[identity] = {
+                    key: self._comparable_value(key, value, wanted[key])
+                    for key, value in state.items()
+                    if key in wanted
+                }
             else:
                 comparable[identity] = state
         return comparable
+
+    def _comparable_value(self, key: str, in_gitlab: Any, in_configuration: Any) -> Any:
+        """The current value of one key as the diff is to read it against the config.
+
+        A list this section pairs by matching rather than by index is read the way that
+        matcher reads it, so that an entry GitLab returns with more keys than the config
+        declares - the access_level it keeps beside a group id, the description it
+        composes - is the entry it matches and not a difference to announce.
+
+        Every other value is read as it stands. Where the order of a list decides
+        whether the apply path writes, it decides here too.
+        """
+        if not isinstance(in_gitlab, list) or not isinstance(in_configuration, list):
+            return in_gitlab
+
+        if self.custom_diff_analyzers.get(key) is not AbstractProcessor.recursive_diff_analyzer:
+            return in_gitlab
+
+        return align_entries(in_gitlab, in_configuration, self._entries_match)
 
     def _diff_removed_marker(self, entity_config) -> Optional[str]:
         """What to show for an entity that is in GitLab and not in the config, or None

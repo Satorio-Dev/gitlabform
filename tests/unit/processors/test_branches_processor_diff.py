@@ -183,3 +183,83 @@ class TestBranchesDiff:
             "allowed_to_push": [{"user": "johndoe"}],
             "squash_option": "always",
         }
+
+
+class TestBranchesDiffReadsAccessListsLikeTheApplyPath:
+    """A record GitLab returns for a user, a group or a deploy key carries an
+    access_level of its own that build_patch_request_data takes no notice of. The diff
+    is to take no notice of it either, or it announces a change on every run of an
+    already converged tree."""
+
+    @staticmethod
+    def _live_with(*merge_access_levels) -> dict:
+        return {**PROTECTED_MAIN, "merge_access_levels": _access_levels(*merge_access_levels)}
+
+    @staticmethod
+    def _config_with(*allowed_to_merge) -> dict:
+        config = {key: value for key, value in MAIN_CONFIG.items() if key != "merge_access_level"}
+        config["allowed_to_merge"] = list(allowed_to_merge)
+        return config
+
+    def test_the_access_level_gitlab_keeps_beside_a_user_id_is_not_a_difference(self, caplog):
+        processor = _make_processor(
+            [
+                self._live_with(
+                    {"access_level": 40, "access_level_description": "Maintainers"},
+                    {"access_level": 40, "user_id": 967, "access_level_description": "John Doe"},
+                )
+            ]
+        )
+
+        config = self._config_with({"access_level": 40}, {"user_id": 967})
+
+        assert _diff(processor, {"main": config}, caplog) == ""
+
+    def test_a_user_the_config_does_not_name_is_still_a_difference(self, caplog):
+        processor = _make_processor(
+            [
+                self._live_with(
+                    {"access_level": 40, "access_level_description": "Maintainers"},
+                    {"access_level": 40, "user_id": 967, "access_level_description": "John Doe"},
+                )
+            ]
+        )
+
+        config = self._config_with({"access_level": 40}, {"user_id": 968})
+
+        text = _diff(processor, {"main": config}, caplog)
+
+        before, after = text.split("=>")
+        assert "967" in before
+        assert "968" in after
+
+    def test_the_access_level_gitlab_keeps_beside_a_group_id_is_not_a_difference(self, caplog):
+        processor = _make_processor(
+            [
+                self._live_with(
+                    {"access_level": 40, "access_level_description": "Maintainers"},
+                    {"access_level": 40, "group_id": 140444807, "access_level_description": "merchanto-leads"},
+                )
+            ]
+        )
+
+        config = self._config_with({"access_level": 40}, {"group_id": 140444807})
+
+        assert _diff(processor, {"main": config}, caplog) == ""
+
+    def test_a_group_record_is_not_read_as_the_role_it_carries(self, caplog):
+        processor = _make_processor(
+            [
+                self._live_with(
+                    {"access_level": 40, "group_id": 140444807, "access_level_description": "merchanto-leads"},
+                )
+            ]
+        )
+
+        config = self._config_with({"access_level": 40})
+
+        text = _diff(processor, {"main": config}, caplog)
+
+        before, after = text.split("=>")
+        assert "140444807" in before
+        assert "140444807" not in after

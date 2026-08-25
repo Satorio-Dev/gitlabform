@@ -14,6 +14,7 @@ from gitlabform.constants import EXIT_INVALID_INPUT, EXIT_PROCESSING_ERROR
 from gitlabform.gitlab import GitLab
 from gitlabform.processors.abstract_processor import AbstractProcessor
 from gitlabform.processors.util.branch_protection import BranchProtection
+from gitlabform.processors.util.entity_matching import align_entries
 from gitlabform.processors.util.failed_writes import FailedWrites
 from gitlabform.processors.util.difference_logger import DifferenceLogger
 
@@ -116,7 +117,12 @@ class BranchesProcessor(AbstractProcessor):
     def _print_diff(self, project_or_project_and_group: str, entity_config, diff_only_changed: bool) -> None:
         """Print what each configured branch looks like now and what it will look like
         after apply, keeping every protected branch the config does not mention whole on
-        the removal side."""
+        the removal side.
+
+        Each access list is read the way build_patch_request_data reads it: a record is
+        the rule it matches, so the access_level GitLab keeps beside a user or group id
+        takes no part and is not printed as a change nobody will make.
+        """
         current = self._get_current_state(project_or_project_and_group)
         desired = self._get_desired_state(entity_config)
 
@@ -142,10 +148,12 @@ class BranchesProcessor(AbstractProcessor):
             for key, wanted_value in wanted.items():
                 live_value = live.get(key, "???")
                 if key in self.ACCESS_LEVEL_LISTS and isinstance(live_value, list):
-                    wanted_view[key] = self._projected_access_levels(live_value, wanted_value, additive)
+                    projected = self._projected_access_levels(live_value, wanted_value, additive)
+                    wanted_view[key] = projected
+                    live_view[key] = align_entries(live_value, projected, BranchProtection.rules_match)
                 else:
                     wanted_view[key] = wanted_value
-                live_view[key] = live_value
+                    live_view[key] = live_value
             current_for_diff[branch_name] = live_view
             desired_for_diff[branch_name] = wanted_view
 

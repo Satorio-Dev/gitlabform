@@ -649,3 +649,90 @@ class TestProtectedEnvironmentsProcessorSplitWrite:
         assert self._payloads() == [
             {"deploy_access_levels": [{"id": 13, "_destroy": True}], "required_approval_count": 0}
         ]
+
+
+class TestProtectedEnvironmentsDiffReadsListsLikeTheMatcher:
+    """GitLab returns a deploy access level and an approval rule with the id it
+    assigned, the description it composed and the inheritance type it defaulted to.
+    _entries_match reads none of them, so nothing is written on their account; a diff
+    that reads them announces every converged environment as changing on every run."""
+
+    LIVE = {
+        "name": "production",
+        "deploy_access_levels": [
+            {
+                "id": 32686501,
+                "access_level": None,
+                "access_level_description": "retryal-credits",
+                "user_id": None,
+                "group_id": 140444815,
+                "group_inheritance_type": 0,
+            }
+        ],
+        "required_approval_count": 0,
+        "approval_rules": [
+            {
+                "id": 3824833,
+                "user_id": None,
+                "group_id": 140444742,
+                "access_level": None,
+                "access_level_description": "retryal-credits-po-qa",
+                "required_approvals": 2,
+                "group_inheritance_type": 0,
+            }
+        ],
+    }
+
+    @staticmethod
+    def _config(deploy_access_levels: list, approval_rules: list) -> dict:
+        return {
+            "production": {
+                "name": "production",
+                "deploy_access_levels": deploy_access_levels,
+                "approval_rules": approval_rules,
+            },
+            "enforce": True,
+        }
+
+    def setup_method(self):
+        self.gitlab = MagicMock()
+        with patch("gitlabform.processors.abstract_processor.GitlabWrapper"):
+            self.processor = ProtectedEnvironmentsProcessor(self.gitlab)
+        self.gitlab.list_protected_environments.return_value = [self.LIVE]
+
+    def _diff(self, config: dict, caplog) -> str:
+        with caplog.at_level("INFO"):
+            self.processor._print_diff("foo/bar", config, diff_only_changed=True)
+        return "\n".join(r.message for r in caplog.records if "protected_environments changes" in r.message)
+
+    def test_what_gitlab_adds_to_an_entry_the_config_declares_is_not_a_difference(self, caplog):
+        config = self._config(
+            [{"group_id": 140444815}],
+            [{"group_id": 140444742, "required_approvals": 2}],
+        )
+
+        assert self._diff(config, caplog) == ""
+
+    def test_a_different_number_of_required_approvals_is_still_a_difference(self, caplog):
+        config = self._config(
+            [{"group_id": 140444815}],
+            [{"group_id": 140444742, "required_approvals": 3}],
+        )
+
+        text = self._diff(config, caplog)
+
+        before, after = text.split("=>")
+        assert '"required_approvals": 2' in before
+        assert '"required_approvals": 3' in after
+
+    def test_a_different_group_is_still_a_difference(self, caplog):
+        config = self._config(
+            [{"group_id": 140444816}],
+            [{"group_id": 140444742, "required_approvals": 2}],
+        )
+
+        text = self._diff(config, caplog)
+
+        before, after = text.split("=>")
+        assert "140444815" in before
+        assert "140444816" in after
