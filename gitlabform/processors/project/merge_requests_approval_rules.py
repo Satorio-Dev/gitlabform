@@ -45,24 +45,40 @@ class MergeRequestsApprovalRules(MultipleEntitiesProcessor):
 
     @staticmethod
     def _normalize_rule_from_gitlab(entity_in_gitlab: dict) -> dict:
-        # GitLab returns users/groups as lists of objects and protected_branches as list
-        # of objects with a "name" field, while the config (post-transform) has user_ids /
-        # group_ids as int lists and protected_branches as list of names. Without
-        # normalization the base _needs_update always triggers an update, even when nothing
-        # changed. We normalize both sides unconditionally so keys line up regardless of
-        # whether GitLab omitted an empty list or the user omitted the field in config.
+        """Read the rule GitLab returns in the shapes the config is written in.
+
+        GitLab answers with users and groups as lists of objects and with the branches
+        as objects carrying both a name and an id, while the config (post-transform)
+        carries user_ids and group_ids as lists of ints and the branches as either
+        names or ids. Without this the base _needs_update reports a difference on
+        every run of a rule nothing has changed about.
+
+        The branches are laid out both ways, because the config may speak either, and
+        a key the config does not declare costs the comparison nothing.
+        """
         gitlab_norm = dict(entity_in_gitlab)
         gitlab_norm["user_ids"] = sorted(u["id"] for u in gitlab_norm.pop("users", []))
         gitlab_norm["group_ids"] = sorted(g["id"] for g in gitlab_norm.pop("groups", []))
-        gitlab_norm["protected_branches"] = sorted(b["name"] for b in gitlab_norm.get("protected_branches", []))
+        branches_in_gitlab = gitlab_norm.get("protected_branches", [])
+        gitlab_norm["protected_branches"] = sorted(b["name"] for b in branches_in_gitlab)
+        gitlab_norm["protected_branch_ids"] = sorted(b["id"] for b in branches_in_gitlab)
         return gitlab_norm
 
     @staticmethod
     def _normalize_rule_from_config(entity_in_configuration: dict) -> dict:
-        # edit_approval_rule treats missing user_ids/group_ids/protected_branches
-        # in config as "clear them", so mirror that here to keep the comparison honest.
+        """Read the configured rule the way edit_approval_rule writes it.
+
+        That path takes a missing list of approvers as "clear them", so an omitted one
+        is compared as empty rather than as unstated. It takes a missing list of
+        branches the same way, but only when the config names them neither as
+        `protected_branches` nor as `protected_branch_ids`: a rule scoped by id has
+        said what it wants, and is compared against the ids GitLab reports.
+        """
         config_norm = dict(entity_in_configuration)
         config_norm["user_ids"] = sorted(config_norm.get("user_ids", []))
         config_norm["group_ids"] = sorted(config_norm.get("group_ids", []))
-        config_norm["protected_branches"] = sorted(config_norm.get("protected_branches", []))
+        if "protected_branch_ids" in config_norm:
+            config_norm["protected_branch_ids"] = sorted(config_norm["protected_branch_ids"])
+        else:
+            config_norm["protected_branches"] = sorted(config_norm.get("protected_branches", []))
         return config_norm

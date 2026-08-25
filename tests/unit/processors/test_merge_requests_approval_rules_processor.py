@@ -103,6 +103,37 @@ class TestMergeRequestsApprovalRulesProcessor:
 
         assert self.processor._needs_update(gitlab_rule, config) is True
 
+    def test_no_update_when_protected_branch_ids_match(self):
+        gitlab_rule = self._gitlab_rule(
+            protected_branches=[
+                {"id": 231211600, "name": "main"},
+                {"id": 231211601, "name": "release/*"},
+            ],
+        )
+        config = {
+            "name": "standard",
+            "approvals_required": 1,
+            "protected_branch_ids": [231211601, 231211600],
+        }
+
+        assert self.processor._needs_update(gitlab_rule, config) is False
+
+    def test_update_when_protected_branch_ids_differ(self):
+        gitlab_rule = self._gitlab_rule(protected_branches=[{"id": 231211600, "name": "main"}])
+        config = {
+            "name": "standard",
+            "approvals_required": 1,
+            "protected_branch_ids": [231211601],
+        }
+
+        assert self.processor._needs_update(gitlab_rule, config) is True
+
+    def test_update_when_config_clears_branches_but_gitlab_has_them(self):
+        gitlab_rule = self._gitlab_rule(protected_branches=[{"id": 231211600, "name": "main"}])
+        config = {"name": "standard", "approvals_required": 1}
+
+        assert self.processor._needs_update(gitlab_rule, config) is True
+
     def test_update_when_approvals_required_changes(self):
         gitlab_rule = self._gitlab_rule(approvals_required=1)
         config = {"name": "standard", "approvals_required": 2}
@@ -187,6 +218,23 @@ class TestMergeRequestsApprovalRulesDryRunDiff:
         text = self._diff(self._config(rule_type="any_approver"), caplog)
 
         assert "any_approver" in text
+
+    def test__branches_declared_as_ids_and_equal_are_silent(self, caplog):
+        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule()]
+        config = self._config(protected_branch_ids=[1])
+        del config["security rule"]["protected_branches"]
+
+        assert self._diff(config, caplog) == ""
+
+    def test__branches_declared_as_ids_and_different_are_reported(self, caplog):
+        self.gitlab.get_approval_rules.return_value = [self._gitlab_rule()]
+        config = self._config(protected_branch_ids=[2])
+        del config["security rule"]["protected_branches"]
+
+        text = self._diff(config, caplog)
+
+        assert "protected_branch_ids" in text
+        assert "2" in text
 
     def test__rule_only_in_gitlab_is_reported_as_removed_by_enforce(self, caplog):
         self.gitlab.get_approval_rules.return_value = [self._gitlab_rule(name="legacy")]
